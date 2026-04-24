@@ -1,0 +1,28 @@
+# Maintainer: Vladislav Minakov <v@minakov.pro>
+
+pkgname=tgbot
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Telegram bot for server management — written in Rust"
+arch=('x86_64')
+url="https://gitlab.minakov.pro/vaminakov/tgbot"
+makedepends=('rust')
+license=('MIT')
+backup=('etc/tgbot/config.toml')
+source=("tgbot.sysusers"
+        "tgbot.tmpfiles")
+sha512sums=('9992f7155f654343010da49c48f7cb434b22f917031951868df6d488739a2fa029c239c3f4a85b8737c6f5aebf3cc0c57e744d51cd4ec69931da4237bb9ac6ae'
+            '87883bd6c6d86f73660a799d1eec281d3447ed88d6316a347754651b59428e9a19a45163495fd2ad04c5b4b0a83a9fb11d750f2c94e78f93fe3588c56db1c28e')
+
+build() {
+  cd "$startdir/.."
+  cargo build --release
+}
+
+package() {
+  install -Dm755 "$startdir/../target/release/tgbot"          "$pkgdir/usr/bin/tgbot"
+  install -Dm644 "$startdir/../systemd/tgbot.service"         "$pkgdir/usr/lib/systemd/system/tgbot.service"
+  install -Dm644 "$srcdir/tgbot.sysusers"                     "$pkgdir/usr/lib/sysusers.d/tgbot.conf"
+  install -Dm644 "$srcdir/tgbot.tmpfiles"                     "$pkgdir/usr/lib/tmpfiles.d/tgbot.conf"
+  install -Dm640 "$startdir/../config.example.toml"           "$pkgdir/etc/tgbot/config.toml"
+}

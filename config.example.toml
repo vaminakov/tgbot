@@ -1,0 +1,85 @@
+# tgbot configuration — copy to /etc/tgbot/config.toml
+# chmod 600 /etc/tgbot/config.toml && chown tgbot:tgbot /etc/tgbot/config.toml
+
+[bot]
+# Режим: "webhook" или "polling"
+mode = "webhook"
+# URL-путь webhook (безопасность через obscurity)
+webhook_path = "/secretwebhook"
+# Bind: TCP или Unix socket
+# bind = "127.0.0.1:8080"
+bind = "unix:/run/tgbot/bot.sock"
+# Таймаут shell-команд (секунды)
+exec_timeout_secs = 30
+# IP-фильтр: "telegram" | "disabled" | ["1.2.3.0/24"]
+webhook_ip_whitelist = "telegram"
+
+[telegram]
+token = "123456:ABC-DEF-REPLACE-ME"
+# Кастомный Telegram API адрес (пусто = api.telegram.org)
+api_address = ""
+# SOCKS5/HTTP прокси (пусто = не использовать)
+# proxy = "socks5://user:pass@host:1080"
+proxy = ""
+request_timeout_secs = 10
+request_retries = 3
+
+[admins]
+# Первая запись — super-admin (уведомления + sudo)
+"123456789" = "BestAdmin"
+
+[zabbix]
+url = "https://monit.example.com/"
+user = "zabbix_api"
+password = "REPLACE_ME"
+
+[speedtest]
+server_url = ""
+
+[[commands]]
+name = "status"
+cmd = "sudo /etc/sh/status.sh"
+desc = "Статус сервера"
+sudo_check = true
+
+[[commands]]
+name = "reboot"
+cmd = "sudo /usr/bin/screen -dmS reboot bash -c 'sleep 5 && reboot'"
+desc = "Перезагрузка (задержка 5 сек)"
+sudo_check = true
+
+[[commands]]
+name = "unban"
+cmd = "sudo /usr/bin/fail2ban-client unban {arg1}"
+desc = "Разблокировать IP (fail2ban). /unban <IP>"
+sudo_check = true
+
+[[commands]]
+name = "unban-cs"
+cmd = "sudo /usr/bin/cscli decisions delete -i {arg1}"
+desc = "Разблокировать IP (CrowdSec). /unban-cs <IP>"
+sudo_check = true
+
+[[commands]]
+name = "whois"
+cmd = "/usr/sbin/whois {arg1}"
+desc = "WHOIS-запрос. /whois <IP или домен>"
+sudo_check = false
+
+[[commands]]
+name = "mikrotik"
+cmd = "sudo /etc/sh/mikrotik.sh {arg1}"
+desc = "MikroTik. Аргументы: update | geoip_on | geoip_off"
+sudo_check = true
+
+[[commands]]
+name = "snft"
+cmd = "sudo /usr/bin/snft {args}"
+desc = "SNFT anti-DDoS. /snft -d -f 20"
+sudo_check = true
+
+[[commands]]
+name = "sudo"
+cmd = "{args}"
+desc = "Произвольная команда (только super-admin)"
+sudo_check = false

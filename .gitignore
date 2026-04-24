@@ -1,0 +1,16 @@
+# Rust build output
+/target/
+
+# Local development config (never commit real tokens/passwords)
+config.toml
+
+# Editor and IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

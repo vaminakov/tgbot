@@ -1,0 +1,43 @@
+[Unit]
+Description=Telegram Bot (tgbot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tgbot
+Group=tgbot
+
+ExecStart=/usr/bin/tgbot --config /etc/tgbot/config.toml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tgbot
+
+# ── Hardening ─────────────────────────────────────────────────────────────────
+# NoNewPrivileges and RestrictSUIDSGID must remain 'no' because commands
+# in config.toml use 'sudo' (setuid binary). If you have NO sudo commands,
+# set both to 'yes' for stronger confinement.
+NoNewPrivileges=no
+RestrictSUIDSGID=no
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service @privileged
+SystemCallArchitectures=native
+
+RuntimeDirectory=tgbot
+RuntimeDirectoryMode=0755
+ReadWritePaths=/run/tgbot /tmp
+
+[Install]
+WantedBy=multi-user.target

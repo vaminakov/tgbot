@@ -1,0 +1,2 @@
+# Set ownership of config after tgbot user/group is created by sysusers
+z /etc/tgbot/config.toml 640 root tgbot - -
