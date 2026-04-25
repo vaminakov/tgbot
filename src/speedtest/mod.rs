@@ -1,6 +1,6 @@
+use bytes::Bytes;
 use serde::Deserialize;
 use std::fmt;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::info;
 
@@ -38,7 +38,9 @@ struct OoklaServer {
 }
 
 /// Synchronous entry point — called via spawn_blocking from the async runtime.
-pub fn run() -> Result<String, BotError> {
+/// `server_url`: explicit Ookla server URL (e.g. "https://host:8080/upload.php"),
+/// or empty string to auto-select the nearest server via speedtest.net API.
+pub fn run(server_url: String) -> Result<String, BotError> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -46,7 +48,7 @@ pub fn run() -> Result<String, BotError> {
             message: e.to_string(),
         })?;
     rt.block_on(async {
-        tokio::time::timeout(Duration::from_secs(90), run_async())
+        tokio::time::timeout(Duration::from_secs(90), run_async(server_url))
             .await
             .map_err(|_| BotError::Speedtest {
                 message: "speedtest timed out after 90s".into(),
@@ -54,7 +56,7 @@ pub fn run() -> Result<String, BotError> {
     })
 }
 
-async fn run_async() -> Result<String, BotError> {
+async fn run_async(server_url: String) -> Result<String, BotError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent("Mozilla/5.0")
@@ -63,12 +65,18 @@ async fn run_async() -> Result<String, BotError> {
             message: e.to_string(),
         })?;
 
-    let server = get_best_server(&client).await?;
-    info!(url = %server.url, "speedtest server selected");
+    let url = if server_url.is_empty() {
+        let server = get_best_server(&client).await?;
+        info!(url = %server.url, "speedtest: auto-selected server");
+        server.url
+    } else {
+        info!(url = %server_url, "speedtest: using configured server");
+        server_url
+    };
 
-    let ping = measure_ping(&client, &server.url).await?;
-    let download = measure_download(&client, &server.url).await?;
-    let upload = measure_upload(&client, &server.url).await?;
+    let ping = measure_ping(&client, &url).await?;
+    let download = measure_download(&client, &url).await?;
+    let upload = measure_upload(&client, &url).await?;
 
     Ok(SpeedtestResult {
         ping_ms: ping,
@@ -76,6 +84,7 @@ async fn run_async() -> Result<String, BotError> {
         upload_mbps: upload,
     }
     .to_string())
+
 }
 
 async fn get_best_server(client: &reqwest::Client) -> Result<OoklaServer, BotError> {
@@ -141,11 +150,17 @@ async fn measure_download(client: &reqwest::Client, server_url: &str) -> Result<
             total += n;
         }
     }
+    if total == 0 {
+        return Err(BotError::Speedtest {
+            message: "download failed (no data received from server)".into(),
+        });
+    }
     Ok(bytes_to_mbps(total as f64 / t0.elapsed().as_secs_f64()))
 }
 
 async fn measure_upload(client: &reqwest::Client, server_url: &str) -> Result<f64, BotError> {
-    let payload = Arc::new(
+    // bytes::Bytes is Arc-backed — clone() is O(1), no 10 MB copy per task
+    let payload = Bytes::from(
         (0..10_485_760_usize)
             .map(|_| rand::random::<u8>())
             .collect::<Vec<_>>(),
@@ -153,10 +168,11 @@ async fn measure_upload(client: &reqwest::Client, server_url: &str) -> Result<f6
     let t0 = Instant::now();
     let mut tasks = Vec::new();
     for _ in 0..4 {
-        let (c, u, d) = (client.clone(), server_url.to_string(), Arc::clone(&payload));
+        let (c, u, d) = (client.clone(), server_url.to_string(), payload.clone());
         tasks.push(tokio::spawn(async move {
-            let _ = c.post(&u).body((*d).clone()).send().await?.bytes().await?;
-            Ok::<usize, reqwest::Error>(d.len())
+            let len = d.len();
+            let _ = c.post(&u).body(d).send().await?.bytes().await?;
+            Ok::<usize, reqwest::Error>(len)
         }));
     }
     let mut total = 0usize;
@@ -164,6 +180,11 @@ async fn measure_upload(client: &reqwest::Client, server_url: &str) -> Result<f6
         if let Ok(Ok(n)) = t.await {
             total += n;
         }
+    }
+    if total == 0 {
+        return Err(BotError::Speedtest {
+            message: "upload failed (no data sent to server)".into(),
+        });
     }
     Ok(bytes_to_mbps(total as f64 / t0.elapsed().as_secs_f64()))
 }

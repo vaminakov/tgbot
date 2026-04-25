@@ -8,6 +8,8 @@ pub fn parse_input(text: &str) -> (&str, Vec<&str>) {
     let text = text.trim_start_matches('/');
     let mut parts = text.splitn(2, ' ');
     let cmd = parts.next().unwrap_or("").trim();
+    // Strip @botname suffix sent in group chats (e.g. "/status@mybotname")
+    let cmd = cmd.split('@').next().unwrap_or(cmd);
     let rest = parts.next().unwrap_or("").trim();
     let args = if rest.is_empty() {
         vec![]
@@ -70,15 +72,13 @@ pub async fn exec_shell(cmd: &str, timeout_secs: u64) -> Result<String, BotError
         combined.push_str(&format!("\n[exit: {}]", code));
     }
     if combined.len() > 4096 {
-        // Find the last char boundary at or before byte 4093 to avoid panicking
-        // on multibyte UTF-8 characters (e.g., Cyrillic chars are 2 bytes).
-        let truncate_at = combined[..combined.len().min(4094)]
-            .char_indices()
+        // Walk back from byte 4093 to find a valid UTF-8 boundary (handles
+        // 2-byte Cyrillic, 3-byte CJK, 4-byte emoji without panicking).
+        let end = (0..=4093.min(combined.len()))
             .rev()
-            .find(|&(i, _)| i <= 4093)
-            .map(|(i, _)| i)
+            .find(|&i| combined.is_char_boundary(i))
             .unwrap_or(0);
-        combined.truncate(truncate_at);
+        combined.truncate(end);
         combined.push_str("...");
     }
     Ok(combined)
@@ -108,14 +108,20 @@ pub async fn run_configured_cmd(
 }
 
 /// Build help text listing all available commands.
-pub fn help_text(commands: &[CommandConfig]) -> String {
+pub fn help_text(commands: &[CommandConfig], zabbix_configured: bool) -> String {
     let mut lines = vec!["Доступные команды:".to_string()];
     for c in commands {
         lines.push(format!("/{} — {}", c.name, c.desc));
     }
+    lines.push("/status — состояние сервера".to_string());
+    lines.push("/top — топ процессов по CPU и памяти".to_string());
+    lines.push("/reboot — немедленная перезагрузка сервера".to_string());
     lines.push("/speedtest — замер скорости канала".to_string());
-    lines.push("/zbx_graph <itemid> <period> [name] — график Zabbix".to_string());
-    lines.push("/tr — проверка Zabbix API".to_string());
+    lines.push("/whois <IP> — информация об IP (RDAP)".to_string());
+    lines.push("/ping <хост> — проверить доступность хоста".to_string());
+    if zabbix_configured {
+        lines.push("/zbx_graph <itemid> <period> [name] — график Zabbix".to_string());
+    }
     lines.join("\n")
 }
 

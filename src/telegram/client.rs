@@ -5,7 +5,7 @@ use tracing::{error, warn};
 
 use crate::config::TelegramConfig;
 use crate::error::BotError;
-use crate::telegram::types::{InlineKeyboardMarkup, Update};
+use crate::telegram::types::{InlineKeyboardMarkup, Update, WebhookInfo};
 
 pub struct TelegramClient {
     pub(crate) base_url: String,
@@ -172,22 +172,6 @@ impl TelegramClient {
         Ok(())
     }
 
-    pub async fn send_photo(
-        &self,
-        chat_id: i64,
-        filename: &str,
-        bytes: Vec<u8>,
-    ) -> Result<(), BotError> {
-        let part = reqwest::multipart::Part::bytes(bytes)
-            .file_name(filename.to_string())
-            .mime_str("image/png")?;
-        let form = reqwest::multipart::Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part("photo", part);
-        self.post_multipart::<serde_json::Value>("sendPhoto", form)
-            .await?;
-        Ok(())
-    }
 
     pub async fn answer_callback_query(&self, callback_query_id: &str) -> Result<(), BotError> {
         #[derive(Serialize)]
@@ -238,20 +222,33 @@ impl TelegramClient {
         Ok(r.result.unwrap_or_default())
     }
 
-    pub async fn set_webhook(&self, url: &str) -> Result<(), BotError> {
+    pub async fn set_webhook(&self, url: &str, drop_pending_updates: bool) -> Result<(), BotError> {
         #[derive(Serialize)]
         struct Body<'a> {
             url: &'a str,
+            drop_pending_updates: bool,
         }
-        self.post_json::<serde_json::Value, _>("setWebhook", &Body { url })
+        self.post_json::<serde_json::Value, _>(
+            "setWebhook",
+            &Body { url, drop_pending_updates },
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_webhook(&self, drop_pending_updates: bool) -> Result<(), BotError> {
+        #[derive(Serialize)]
+        struct Body {
+            drop_pending_updates: bool,
+        }
+        self.post_json::<serde_json::Value, _>("deleteWebhook", &Body { drop_pending_updates })
             .await?;
         Ok(())
     }
 
-    pub async fn delete_webhook(&self) -> Result<(), BotError> {
-        self.post_json::<serde_json::Value, _>("deleteWebhook", &serde_json::json!({}))
-            .await?;
-        Ok(())
+    pub async fn get_webhook_info(&self) -> Result<WebhookInfo, BotError> {
+        self.post_json::<WebhookInfo, _>("getWebhookInfo", &serde_json::json!({}))
+            .await
     }
 }
 

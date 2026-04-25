@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Deserialize)]
+pub struct WebhookInfo {
+    pub url: String,
+    pub pending_update_count: u32,
+    pub last_error_message: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Update {
     pub update_id: i64,
@@ -65,7 +72,6 @@ impl Update {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Message {
-    pub message_id: i64,
     pub chat: Chat,
     pub from: Option<User>,
     pub text: Option<String>,
@@ -78,7 +84,6 @@ pub struct Chat {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct User {
-    pub id: i64,
     pub first_name: String,
     pub username: Option<String>,
 }

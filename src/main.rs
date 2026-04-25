@@ -1,13 +1,16 @@
 mod bot;
 mod config;
 mod error;
+mod monitor;
 mod speedtest;
+mod system;
 mod telegram;
+mod whois;
 mod zabbix;
 
 use clap::Parser;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 use bot::{security::IpWhitelist, BotContext};
 use config::{BotMode, Config};
@@ -32,6 +35,65 @@ struct Cli {
     /// Send silently (no notification). Used with -m.
     #[arg(long)]
     silent: bool,
+}
+
+async fn configure_telegram_mode(
+    config: &config::Config,
+    tg: &TelegramClient,
+) -> Result<(), crate::error::BotError> {
+    use config::BotMode;
+
+    match config.bot.mode {
+        BotMode::Polling => {
+            info!("Polling mode: deleting webhook (drop_pending=true)");
+            tg.delete_webhook(true).await?;
+        }
+        BotMode::Webhook => {
+            let url = match &config.bot.webhook_address {
+                Some(u) if !u.is_empty() => u,
+                _ => {
+                    info!("webhook_address not set, skipping webhook configuration");
+                    return Ok(());
+                }
+            };
+
+            if config.bot.always_set_webhook {
+                info!(url, "Setting webhook (always_set_webhook=true)");
+                tg.set_webhook(url, false).await?;
+            } else {
+                let wh_info = tg.get_webhook_info().await?;
+                let url_mismatch = wh_info.url != *url;
+                let has_error = wh_info.last_error_message.is_some();
+
+                if !url_mismatch && !has_error {
+                    info!("Webhook OK, no changes needed");
+                    return Ok(());
+                }
+
+                if has_error {
+                    warn!(
+                        error = ?wh_info.last_error_message,
+                        pending = wh_info.pending_update_count,
+                        "Webhook error detected, re-registering with drop_pending=true"
+                    );
+                }
+
+                tg.set_webhook(url, has_error).await?;
+                info!(url, "Webhook updated");
+
+                if has_error && config.bot.notify_on_webhook_error {
+                    if let Some(super_id) = config.super_admin_id() {
+                        let msg = format!(
+                            "⚠️ Webhook ошибка при старте: {}\nВебхук переregister'ен.",
+                            wh_info.last_error_message.as_deref().unwrap_or("unknown")
+                        );
+                        let _ = tg.send_message(super_id, &msg, None, false).await;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -73,11 +135,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Build shared context ──────────────────────────────────────────────
     let tg = Arc::new(TelegramClient::new(&config.telegram)?);
-    let zbx = if !config.zabbix.url.is_empty() {
-        Some(Arc::new(zabbix::ZabbixClient::new(&config.zabbix)))
-    } else {
-        None
-    };
+
+    configure_telegram_mode(&config, &tg).await?;
 
     let mut patched = config.clone();
     sudo_check_commands(&mut patched.commands).await;
@@ -85,8 +144,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = Arc::new(BotContext {
         config: Arc::new(patched),
         tg: Arc::clone(&tg),
-        zabbix: zbx,
     });
+
+    let monitor_handle = tokio::spawn(monitor::run(Arc::clone(&ctx)));
 
     // ── Start server ──────────────────────────────────────────────────────
     match config.bot.mode {
@@ -100,6 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_polling(ctx, tg).await;
         }
     }
+    monitor_handle.abort();
     Ok(())
 }
 
@@ -107,7 +168,6 @@ async fn run_polling(ctx: Arc<BotContext>, tg: Arc<TelegramClient>) {
     use tokio::signal::unix::{signal, SignalKind};
     use tokio::time::{sleep, Duration};
 
-    let _ = tg.delete_webhook().await;
     let mut offset: i64 = 0;
     let mut backoff: u64 = 1;
 
@@ -146,24 +206,32 @@ async fn run_polling(ctx: Arc<BotContext>, tg: Arc<TelegramClient>) {
     }
 }
 
-async fn sudo_check_commands(commands: &mut Vec<config::CommandConfig>) {
+async fn sudo_check_commands(commands: &mut [config::CommandConfig]) {
     for cmd in commands.iter_mut() {
         if !cmd.sudo_check {
             continue;
         }
-        let first_word = cmd
+        // Pass the full command (minus "sudo") to `sudo -l` so that
+        // argument-specific sudoers rules (e.g. NOPASSWD: /bin/foo bar *)
+        // are matched correctly. Placeholders are replaced with a dummy value
+        // that matches any wildcard rule in sudoers.
+        let args: Vec<String> = cmd
             .cmd
             .split_whitespace()
-            .find(|w| *w != "sudo")
-            .unwrap_or("")
-            .to_string();
-        if first_word.is_empty() {
+            .filter(|w| *w != "sudo")
+            .map(|w| match w {
+                "{arg1}" | "{args}" => "_check_".to_string(),
+                other => other.to_string(),
+            })
+            .collect();
+        if args.is_empty() {
             tracing::warn!(cmd = %cmd.name, "sudo_check: no command word found, skipping");
             continue;
         }
 
         let ok = tokio::process::Command::new("sudo")
-            .args(["-l", "-U", "tgbot", &first_word])
+            .arg("-l").arg("-U").arg("tgbot").arg("--")
+            .args(&args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()

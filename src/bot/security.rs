@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::config::IpWhitelistConfig;
 use crate::error::BotError;
 use ipnet::IpNet;
@@ -28,7 +26,7 @@ impl IpWhitelist {
     pub fn from_config(cfg: &IpWhitelistConfig) -> Result<Self, BotError> {
         match cfg {
             IpWhitelistConfig::Named(s) if s == "disabled" => Ok(Self::Disabled),
-            IpWhitelistConfig::Named(_) => {
+            IpWhitelistConfig::Named(s) if s == "telegram" => {
                 let nets: Vec<IpNet> = TELEGRAM_CIDRS
                     .iter()
                     .map(|s| {
@@ -38,6 +36,12 @@ impl IpWhitelist {
                     .collect();
                 Ok(Self::CidrList(nets))
             }
+            IpWhitelistConfig::Named(s) => Err(BotError::InvalidArgument {
+                input: format!(
+                    "unknown webhook_ip_whitelist: '{}'; use \"telegram\", \"disabled\", or a CIDR list",
+                    s
+                ),
+            }),
             IpWhitelistConfig::Custom(cidrs) => {
                 let nets: Vec<IpNet> = cidrs
                     .iter()
@@ -121,6 +125,14 @@ mod tests {
         assert_eq!(sanitize_arg("192.168.1.1").unwrap(), "192.168.1.1");
         assert_eq!(sanitize_arg("example.com").unwrap(), "example.com");
         assert_eq!(sanitize_arg("geoip_on").unwrap(), "geoip_on");
+    }
+
+    #[test]
+    fn test_unknown_whitelist_value_is_error() {
+        let result = IpWhitelist::from_config(&IpWhitelistConfig::Named("Telegram".into()));
+        assert!(result.is_err());
+        let result = IpWhitelist::from_config(&IpWhitelistConfig::Named("all".into()));
+        assert!(result.is_err());
     }
 
     #[test]

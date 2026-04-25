@@ -11,6 +11,8 @@ pub struct Config {
     #[serde(default)]
     pub speedtest: SpeedtestConfig,
     #[serde(default)]
+    pub monitor: MonitorConfig,
+    #[serde(default)]
     pub commands: Vec<CommandConfig>,
 }
 
@@ -56,6 +58,13 @@ pub struct BotConfig {
     pub exec_timeout_secs: u64,
     #[serde(default = "defaults::ip_whitelist")]
     pub webhook_ip_whitelist: IpWhitelistConfig,
+    /// URL вебхука для автоматической регистрации при старте.
+    /// Если None — управляй вебхуком вручную.
+    pub webhook_address: Option<String>,
+    #[serde(default = "defaults::always_set_webhook")]
+    pub always_set_webhook: bool,
+    #[serde(default = "defaults::notify_on_webhook_error")]
+    pub notify_on_webhook_error: bool,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -114,6 +123,41 @@ pub struct SpeedtestConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct MonitorConfig {
+    /// Enable background threshold monitoring.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Check interval in seconds.
+    #[serde(default = "defaults::monitor_interval")]
+    pub interval_secs: u64,
+    /// CPU usage % threshold.
+    #[serde(default = "defaults::cpu_warn")]
+    pub cpu_warn: u8,
+    /// RAM usage % threshold.
+    #[serde(default = "defaults::ram_warn")]
+    pub ram_warn: u8,
+    /// Root disk usage % threshold.
+    #[serde(default = "defaults::disk_warn")]
+    pub disk_warn: u8,
+    /// Seconds between repeat alerts while threshold remains breached.
+    #[serde(default = "defaults::remind_secs")]
+    pub remind_secs: u64,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: defaults::monitor_interval(),
+            cpu_warn: defaults::cpu_warn(),
+            ram_warn: defaults::ram_warn(),
+            disk_warn: defaults::disk_warn(),
+            remind_secs: defaults::remind_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct CommandConfig {
     pub name: String,
     pub cmd: String,
@@ -145,6 +189,17 @@ mod defaults {
     pub fn ip_whitelist() -> IpWhitelistConfig {
         IpWhitelistConfig::Named("telegram".to_string())
     }
+    pub fn always_set_webhook() -> bool {
+        false
+    }
+    pub fn notify_on_webhook_error() -> bool {
+        true
+    }
+    pub fn monitor_interval() -> u64 { 60 }
+    pub fn cpu_warn() -> u8 { 85 }
+    pub fn ram_warn() -> u8 { 90 }
+    pub fn disk_warn() -> u8 { 85 }
+    pub fn remind_secs() -> u64 { 1800 }
 }
 
 #[cfg(test)]
@@ -255,5 +310,25 @@ server_url = ""
             cfg.telegram.api_base_url(),
             "https://vpn.example.com/bot12345:TOKEN/"
         );
+    }
+
+    #[test]
+    fn test_monitor_config_defaults() {
+        let cfg: Config = toml::from_str(MINIMAL).unwrap();
+        assert!(!cfg.monitor.enabled);
+        assert_eq!(cfg.monitor.interval_secs, 60);
+        assert_eq!(cfg.monitor.cpu_warn, 85);
+        assert_eq!(cfg.monitor.ram_warn, 90);
+        assert_eq!(cfg.monitor.disk_warn, 85);
+        assert_eq!(cfg.monitor.remind_secs, 1800);
+    }
+
+    #[test]
+    fn test_monitor_config_explicit() {
+        let toml = MINIMAL.to_string() + "\n[monitor]\nenabled = true\ncpu_warn = 70\n";
+        let cfg: Config = toml::from_str(&toml).unwrap();
+        assert!(cfg.monitor.enabled);
+        assert_eq!(cfg.monitor.cpu_warn, 70);
+        assert_eq!(cfg.monitor.ram_warn, 90); // still default
     }
 }

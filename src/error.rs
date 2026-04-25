@@ -11,11 +11,11 @@ pub enum BotError {
     #[error("Telegram network error: {0}")]
     TelegramNetwork(#[from] reqwest::Error),
 
-    #[error("Zabbix API error: {message}")]
-    ZabbixApi { message: String },
-
     #[error("Zabbix graph error: {message}")]
     ZabbixGraph { message: String },
+
+    #[error("Whois error: {message}")]
+    Whois { message: String },
 
     #[error("Command timed out after {secs}s")]
     CommandTimeout { secs: u64 },

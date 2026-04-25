@@ -8,6 +8,12 @@ Telegram bot for server management — written in Rust. Single compiled binary, 
 - **Configurable commands** — shell commands defined in TOML with argument sanitization
 - **Zabbix integration** — JSON-RPC API client + graph image fetch via web UI
 - **Built-in speedtest** — Ookla-compatible (ping / download / upload), no subprocess
+- **Server status** — uptime, load average, CPU%, RAM, disk usage from `/proc`
+- **Process top** — instantaneous CPU and RAM usage aggregated by process name
+- **Ping** — ICMP reachability check with sanitized input and flag-injection prevention
+- **Whois / RDAP** — IP info (country, city, org, registrant contacts) via RDAP over HTTPS
+- **Safe reboot** — sends acknowledgement before triggering `systemctl reboot --force`
+- **Threshold monitor** — background loop alerts super-admin on CPU/RAM/disk threshold breaches
 - **CLI sender** — send Telegram messages from scripts/cron: `tgbot -m <chat_id> "text"`
 - **IP whitelist** — Telegram CIDRs, custom CIDR list, or disabled (for reverse proxy)
 - **Proxy support** — SOCKS5/HTTP via config
@@ -71,6 +77,22 @@ password = "secret"
 server_url = ""
 ```
 
+### Threshold monitor
+
+The `[monitor]` section is optional — all fields have defaults and monitoring is **disabled** by default.
+
+```toml
+[monitor]
+enabled = true
+interval_secs = 60    # check every 60 seconds
+cpu_warn  = 85        # alert when CPU  >= 85%
+ram_warn  = 90        # alert when RAM  >= 90%
+disk_warn = 85        # alert when disk /  >= 85%
+remind_secs = 1800    # repeat alert every 30 min while threshold is exceeded
+```
+
+When a threshold is breached, super-admin receives e.g. `⚠️ CPU: 91% (порог 85%)`. When it drops back below, they receive `✅ CPU: 72% — норма восстановлена`.
+
 ### Bot modes
 
 | `mode` | Description |
@@ -111,9 +133,13 @@ sudo_check = true
 
 | Command | Description |
 |---|---|
+| `/status` | Server overview: uptime, load, CPU%, RAM, disk |
+| `/top` | Top 5 processes by CPU and RAM (500 ms snapshot) |
+| `/ping <host>` | ICMP reachability check (4 packets) |
+| `/whois <IP>` | IP info via RDAP: country, city, org, registrant contacts |
+| `/reboot` | Immediate forced reboot (sends acknowledgement first) |
 | `/speedtest` | Ookla-compatible bandwidth test (ping + download + upload) |
-| `/zbx_graph <itemid> <period> [name]` | Fetch a Zabbix graph as PNG. Period examples: `1h`, `24h`, `7d` |
-| `/tr` | Check Zabbix API version |
+| `/zbx_graph <itemid> <period> [name]` | Fetch a Zabbix graph as PNG. Period examples: `1h`, `24h`, `7d`, `86400s` |
 | `/sudo <command>` | Run arbitrary shell command (super-admin only) |
 
 ## CLI sender
@@ -237,6 +263,12 @@ tgbot/
     ├── zabbix/
     │   ├── mod.rs             # JSON-RPC client, auth token cache, auto re-login
     │   └── graph.rs           # Web-UI login + chart3.php PNG fetch (in-memory)
-    └── speedtest/
-        └── mod.rs             # Ookla-compatible: server list → ping → dl → ul
+    ├── speedtest/
+    │   └── mod.rs             # Ookla-compatible: server list → ping → dl → ul
+    ├── system/
+    │   └── mod.rs             # /status: uptime, load, CPU%, RAM, disk
+    ├── whois/
+    │   └── mod.rs             # RDAP lookup: country, city, org, contacts
+    └── monitor/
+        └── mod.rs             # Background threshold monitor with alert state machine
 ```

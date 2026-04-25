@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::http::Request;
 use axum::{
     body::Bytes,
-    extract::{ConnectInfo, State},
+    extract::{ConnectInfo, DefaultBodyLimit, State},
     http::StatusCode,
     middleware::{self, Next},
     response::IntoResponse,
@@ -16,6 +16,16 @@ use hyper_util::server::conn::auto::Builder as AutoBuilder;
 use hyper_util::service::TowerToHyperService;
 use tower_service::Service;
 use tracing::{info, warn};
+
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = sigterm.recv() => {},
+    }
+    info!("shutdown signal received, stopping webhook server");
+}
 
 use crate::bot::security::IpWhitelist;
 use crate::bot::{dispatch, BotContext};
@@ -83,6 +93,7 @@ pub async fn serve(
         // Unix socket — no IP check (whitelist irrelevant for local socket)
         let app = Router::new()
             .route(webhook_path, post(webhook_handler))
+            .layer(DefaultBodyLimit::max(1_048_576))
             .with_state(state);
         info!(socket = path, "webhook listening on Unix socket");
         // Remove stale socket file from a previous unclean exit.
@@ -94,26 +105,36 @@ pub async fn serve(
         std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o666))?;
         // axum::serve does not support UnixListener; drive connections manually.
         let mut make_svc = app.into_make_service();
+        let mut shutdown = std::pin::pin!(shutdown_signal());
         loop {
-            let (stream, _addr) = listener.accept().await?;
-            let io = TokioIo::new(stream);
-            // IntoMakeService::poll_ready is always Ready, so call directly.
-            let svc = Service::<()>::call(&mut make_svc, ())
-                .await
-                .map_err(|e| format!("make_service call error: {e}"))?;
-            tokio::spawn(async move {
-                if let Err(e) = AutoBuilder::new(TokioExecutor::new())
-                    .serve_connection(io, TowerToHyperService::new(svc))
-                    .await
-                {
-                    warn!(err = %e, "Unix socket connection error");
+            tokio::select! {
+                _ = &mut shutdown => {
+                    info!("Unix socket server stopped");
+                    break;
                 }
-            });
+                result = listener.accept() => {
+                    let (stream, _addr) = result?;
+                    let io = TokioIo::new(stream);
+                    // IntoMakeService::poll_ready is always Ready, so call directly.
+                    let svc = Service::<()>::call(&mut make_svc, ())
+                        .await
+                        .map_err(|e| format!("make_service call error: {e}"))?;
+                    tokio::spawn(async move {
+                        if let Err(e) = AutoBuilder::new(TokioExecutor::new())
+                            .serve_connection(io, TowerToHyperService::new(svc))
+                            .await
+                        {
+                            warn!(err = %e, "Unix socket connection error");
+                        }
+                    });
+                }
+            }
         }
     } else {
         // TCP — attach IP whitelist middleware
         let app = Router::new()
             .route(webhook_path, post(webhook_handler))
+            .layer(DefaultBodyLimit::max(1_048_576))
             .layer(middleware::from_fn_with_state(state.clone(), ip_guard))
             .with_state(state);
         let addr: SocketAddr = bind.parse()?;
@@ -123,6 +144,7 @@ pub async fn serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
     }
     Ok(())
