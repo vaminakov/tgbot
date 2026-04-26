@@ -108,14 +108,15 @@ fn conv_info(pamh: PamHandleT, text: &str, style: c_int) {
         let msgs = [msg_ptr];
         let mut resp: *mut PamResponse = ptr::null_mut();
         let rc = (conv.conv)(1, msgs.as_ptr(), &mut resp, conv.appdata_ptr);
-        if rc != PAM_SUCCESS {
-            return;
-        }
+        // Free resp even on error — the conversation function may allocate it regardless of return code.
         if !resp.is_null() {
             if !(*resp).resp.is_null() {
                 libc::free((*resp).resp as *mut c_void);
             }
             libc::free(resp as *mut c_void);
+        }
+        if rc != PAM_SUCCESS {
+            return;
         }
     }
 }
@@ -138,6 +139,20 @@ fn lang_is_ru(cfg: &config::LoadedCfg) -> bool {
     }
 }
 
+/// Write a message to syslog AUTH facility — visible in `journalctl -t pam_tgbot`.
+fn slog(priority: libc::c_int, msg: &str) {
+    let Ok(cmsg) = CString::new(msg) else { return };
+    unsafe {
+        libc::openlog(
+            b"pam_tgbot\0".as_ptr() as *const c_char,
+            libc::LOG_NDELAY | libc::LOG_PID,
+            libc::LOG_AUTH,
+        );
+        libc::syslog(priority, b"%s\0".as_ptr() as *const c_char, cmsg.as_ptr());
+        libc::closelog();
+    }
+}
+
 // ── PAM exports ───────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -151,6 +166,8 @@ pub extern "C" fn pam_sm_authenticate(
         return PAM_IGNORE; // no config — not our problem
     };
     if !cfg.pam.two_factor_enabled {
+        slog(libc::LOG_INFO,
+             "two_factor_enabled=false, skipping 2FA (set it to true in [pam] config)");
         return PAM_IGNORE;
     }
 
@@ -159,13 +176,37 @@ pub extern "C" fn pam_sm_authenticate(
     let user  = get_user(pamh).unwrap_or_else(|| "unknown".to_string());
     let rhost = get_item_str(pamh, PAM_RHOST).unwrap_or_else(|| "unknown".to_string());
 
+    // Rate limiting: reject if a 2FA request was made too recently for this user.
+    if cfg.pam.two_factor_rate_limit_secs > 0 {
+        let safe_user: String = user.chars()
+            .map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' })
+            .collect();
+        let rate_file = format!("{}/rl_{}", ipc::IPC_DIR, safe_user);
+        if let Ok(meta) = std::fs::metadata(&rate_file) {
+            if let Ok(modified) = meta.modified() {
+                let elapsed = modified.elapsed().unwrap_or(std::time::Duration::MAX);
+                if elapsed.as_secs() < cfg.pam.two_factor_rate_limit_secs {
+                    slog(libc::LOG_WARNING, &format!(
+                        "2FA rate limit for user {} — {}s remaining",
+                        user,
+                        cfg.pam.two_factor_rate_limit_secs.saturating_sub(elapsed.as_secs())
+                    ));
+                    return PAM_AUTH_ERR;
+                }
+            }
+        }
+        // Touch the rate limit marker (best-effort)
+        let _ = std::fs::write(&rate_file, "");
+    }
+
     let Some(id) = ipc::gen_id() else {
         return PAM_AUTH_ERR;
     };
 
     let Ok(ipc_path) = ipc::create_pending(&id) else {
         // IPC dir not available — bot not running; fail open with a log entry
-        eprintln!("pam_tgbot: /run/tgbot/pam unavailable, skipping 2FA");
+        slog(libc::LOG_ERR,
+             "IPC dir /run/tgbot/pam unavailable — is tgbot.service running? Run: systemctl daemon-reload && systemctl restart tgbot");
         return PAM_IGNORE;
     };
 
@@ -189,6 +230,7 @@ pub extern "C" fn pam_sm_authenticate(
         &cfg.tg.proxy,
     ).is_err() {
         let _ = std::fs::remove_file(&ipc_path);
+        slog(libc::LOG_ERR, "failed to send 2FA request to Telegram — check bot token and network");
         conv_info(
             pamh,
             if ru { "Ошибка: не удалось отправить запрос 2FA." }
@@ -206,8 +248,12 @@ pub extern "C" fn pam_sm_authenticate(
     );
 
     match ipc::poll_response(&ipc_path, cfg.pam.two_factor_timeout_secs) {
-        Some(true)  => PAM_SUCCESS,
+        Some(true)  => {
+            slog(libc::LOG_INFO, &format!("2FA approved for user {user} from {rhost}"));
+            PAM_SUCCESS
+        }
         Some(false) => {
+            slog(libc::LOG_WARNING, &format!("2FA denied for user {user} from {rhost}"));
             conv_info(
                 pamh,
                 if ru { "Доступ отклонён." } else { "Access denied." },
@@ -216,6 +262,7 @@ pub extern "C" fn pam_sm_authenticate(
             PAM_AUTH_ERR
         }
         None => {
+            slog(libc::LOG_WARNING, &format!("2FA timed out for user {user} from {rhost}"));
             conv_info(
                 pamh,
                 if ru { "Таймаут подтверждения 2FA." } else { "2FA confirmation timed out." },
@@ -256,6 +303,11 @@ pub extern "C" fn pam_sm_open_session(
     let rhost = get_item_str(pamh, PAM_RHOST).unwrap_or_else(|| "unknown".to_string());
     let session_id = get_env_str(pamh, "XDG_SESSION_ID");
 
+    if session_id.is_none() {
+        slog(libc::LOG_WARNING,
+             "XDG_SESSION_ID not set — ensure pam_systemd.so runs before pam_tgbot.so in session stack; 'Terminate session' button will be absent");
+    }
+
     let msg = if ru {
         format!("🔑 Авторизован: {} с {}", user, rhost)
     } else {
@@ -263,7 +315,13 @@ pub extern "C" fn pam_sm_open_session(
     };
 
     let kill_data = session_id.as_ref().map(|id| format!("pam_kill:{}", id));
-    let block_data: Option<String> = if !cfg.pam.block_ip_cmd.is_empty() && rhost != "unknown" {
+    // Validate rhost against safe charset (alphanumeric + ._:-).
+    // PAM_RHOST is attacker-controlled (TCP source); embedding it unsanitized in
+    // block_ip_cmd callback_data enables shell injection via {args}-style commands.
+    let rhost_safe = !rhost.is_empty()
+        && rhost != "unknown"
+        && rhost.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c));
+    let block_data: Option<String> = if !cfg.pam.block_ip_cmd.is_empty() && rhost_safe {
         Some(format!("{} {}", cfg.pam.block_ip_cmd, rhost))
     } else {
         None

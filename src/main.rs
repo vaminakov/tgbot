@@ -142,12 +142,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut patched = config.clone();
     sudo_check_commands(&mut patched.commands).await;
+    pam_startup_check(&config);
 
     let lang = Lang::from_config(&config.bot.language);
     let ctx = Arc::new(BotContext {
         config: Arc::new(patched),
         tg: Arc::clone(&tg),
         lang,
+        rate_limit: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     });
 
     let monitor_handle = tokio::spawn(monitor::run(Arc::clone(&ctx)));
@@ -207,6 +209,31 @@ async fn run_polling(ctx: Arc<BotContext>, tg: Arc<TelegramClient>) {
                 }
             }
         }
+    }
+}
+
+fn pam_startup_check(cfg: &config::Config) {
+    if !cfg.pam.enabled {
+        return;
+    }
+    if !cfg.pam.notify_login && !cfg.pam.two_factor_enabled {
+        tracing::warn!(
+            "PAM: integration enabled but both notify_login=false and two_factor_enabled=false \
+             — pam_tgbot.so will do nothing; set at least one to true in [pam] config"
+        );
+    }
+    let ipc_dir = std::path::Path::new("/run/tgbot/pam");
+    if !ipc_dir.exists() {
+        tracing::warn!(
+            "PAM: /run/tgbot/pam does not exist — \
+             run 'systemctl daemon-reload && systemctl restart tgbot' to create it via ExecStartPre"
+        );
+    } else {
+        tracing::info!(
+            two_factor = cfg.pam.two_factor_enabled,
+            notify_login = cfg.pam.notify_login,
+            "PAM: IPC directory OK"
+        );
     }
 }
 

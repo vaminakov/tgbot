@@ -24,7 +24,6 @@ pub async fn lookup(ip: &str, lang: Lang) -> Result<String, BotError> {
     }
 
     let client = Client::builder()
-        .timeout(Duration::from_secs(15))
         .user_agent("tgbot/1.0")
         .build()
         .map_err(|e| BotError::Whois {
@@ -33,24 +32,36 @@ pub async fn lookup(ip: &str, lang: Lang) -> Result<String, BotError> {
 
     info!(%addr, "RDAP lookup");
 
-    let url = format!("https://rdap.arin.net/registry/ip/{}", addr);
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| BotError::Whois {
-            message: format!("RDAP request failed: {}", e),
-        })?;
+    // Try ARIN first (handles redirects to RIPE/APNIC/LACNIC/AFRINIC for non-ARIN IPs).
+    // Fall back to RIPE and APNIC directly if ARIN is unreachable.
+    let rdap_candidates = [
+        format!("https://rdap.arin.net/registry/ip/{}", addr),
+        format!("https://rdap.db.ripe.net/ip/{}", addr),
+        format!("https://rdap.apnic.net/ip/{}", addr),
+    ];
 
-    if !resp.status().is_success() {
-        return Err(BotError::Whois {
-            message: format!("RDAP HTTP {}", resp.status()),
-        });
+    let mut rdap_data: Option<Value> = None;
+    let mut rdap_err = String::new();
+
+    for candidate in &rdap_candidates {
+        match client
+            .get(candidate)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<Value>().await {
+                    Ok(data) => { rdap_data = Some(data); break; }
+                    Err(e) => { rdap_err = e.to_string(); }
+                }
+            }
+            Ok(resp) => { rdap_err = format!("HTTP {}", resp.status()); }
+            Err(e) => { rdap_err = e.to_string(); }
+        }
     }
 
-    let data: Value = resp.json().await.map_err(|e| BotError::Whois {
-        message: format!("RDAP parse error: {}", e),
-    })?;
+    let data = rdap_data.ok_or_else(|| BotError::Whois { message: rdap_err })?;
 
     Ok(format_rdap(addr, &data, lang))
 }

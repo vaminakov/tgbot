@@ -32,6 +32,13 @@ impl Config {
                 <toml::de::Error as serde::de::Error>::custom("telegram token is empty"),
             ));
         }
+        if config.bot.webhook_path != "/" && !config.bot.webhook_path.starts_with('/') {
+            return Err(crate::error::BotError::Config(
+                <toml::de::Error as serde::de::Error>::custom(
+                    "bot.webhook_path must start with '/'",
+                ),
+            ));
+        }
         Ok(config)
     }
 
@@ -69,6 +76,9 @@ pub struct BotConfig {
     pub notify_on_webhook_error: bool,
     #[serde(default = "defaults::language")]
     pub language: String,
+    /// Drop commands if the same chat_id sends faster than this interval (0 = disabled).
+    #[serde(default)]
+    pub command_rate_limit_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -92,8 +102,12 @@ pub enum IpWhitelistConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct TelegramConfig {
     pub token: String,
+    /// Single Telegram Bot API address (legacy; use api_addresses for fallback support).
     #[serde(default)]
     pub api_address: String,
+    /// Ordered list of Telegram Bot API addresses tried in sequence on failure.
+    #[serde(default)]
+    pub api_addresses: Vec<String>,
     #[serde(default)]
     pub proxy: String,
     #[serde(default = "defaults::request_timeout")]
@@ -103,13 +117,30 @@ pub struct TelegramConfig {
 }
 
 impl TelegramConfig {
+    /// Returns the single base URL (first entry from api_base_urls).
+    /// Kept for backward compatibility.
     pub fn api_base_url(&self) -> String {
+        self.api_base_urls().into_iter().next().unwrap_or_default()
+    }
+
+    /// Returns ordered list of full base URLs (including /bot<token>/) to try.
+    /// Prefers api_addresses (list) over api_address (single), falls back to api.telegram.org.
+    pub fn api_base_urls(&self) -> Vec<String> {
+        if !self.api_addresses.is_empty() {
+            // api_addresses: full URLs expected (e.g. "https://mirror.example.com")
+            return self.api_addresses
+                .iter()
+                .map(|addr| format!("{}/bot{}/", addr.trim_end_matches('/'), self.token))
+                .collect();
+        }
+
+        // Legacy api_address: bare hostname or empty
         let host = if self.api_address.is_empty() {
             "api.telegram.org"
         } else {
             self.api_address.as_str()
         };
-        format!("https://{}/bot{}/", host, self.token)
+        vec![format!("https://{}/bot{}/", host, self.token)]
     }
 }
 
@@ -179,6 +210,9 @@ pub struct PamConfig {
     /// Bot command name to block the remote IP (e.g. "ban-cs"). Empty = no button.
     #[serde(default)]
     pub block_ip_cmd: String,
+    /// Minimum seconds between 2FA requests for the same user (0 = disabled).
+    #[serde(default = "defaults::two_factor_rate_limit_secs")]
+    pub two_factor_rate_limit_secs: u64,
 }
 
 impl Default for PamConfig {
@@ -189,6 +223,7 @@ impl Default for PamConfig {
             two_factor_enabled: false,
             two_factor_timeout_secs: defaults::pam_timeout(),
             block_ip_cmd: String::new(),
+            two_factor_rate_limit_secs: defaults::two_factor_rate_limit_secs(),
         }
     }
 }
@@ -238,6 +273,7 @@ mod defaults {
     pub fn remind_secs() -> u64 { 1800 }
     pub fn pam_notify_login() -> bool { true }
     pub fn pam_timeout()       -> u64  { 60  }
+    pub fn two_factor_rate_limit_secs() -> u64 { 30 }
     pub fn language() -> String { "auto".to_string() }
 }
 
@@ -352,6 +388,19 @@ server_url = ""
     }
 
     #[test]
+    fn test_api_base_urls_multi() {
+        let toml = MINIMAL.replace(
+            "token = \"12345:TOKEN\"",
+            "token = \"12345:TOKEN\"\napi_addresses = [\"https://mirror1.example.com\", \"https://api.telegram.org\"]",
+        );
+        let cfg: Config = toml::from_str(&toml).unwrap();
+        let urls = cfg.telegram.api_base_urls();
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0], "https://mirror1.example.com/bot12345:TOKEN/");
+        assert_eq!(urls[1], "https://api.telegram.org/bot12345:TOKEN/");
+    }
+
+    #[test]
     fn test_monitor_config_defaults() {
         let cfg: Config = toml::from_str(MINIMAL).unwrap();
         assert!(!cfg.monitor.enabled);
@@ -379,6 +428,7 @@ server_url = ""
         assert!(!cfg.pam.two_factor_enabled);
         assert_eq!(cfg.pam.two_factor_timeout_secs, 60);
         assert!(cfg.pam.block_ip_cmd.is_empty());
+        assert_eq!(cfg.pam.two_factor_rate_limit_secs, 30);
     }
 
     #[test]

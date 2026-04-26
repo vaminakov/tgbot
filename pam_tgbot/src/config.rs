@@ -37,23 +37,28 @@ pub struct PamCfg {
     /// Notification language: "ru", "en", or "auto" (detect from LC_ALL/LANG).
     #[serde(default = "default_language")]
     pub language: String,
+    /// Minimum seconds between 2FA requests for the same user (0 = disabled).
+    #[serde(default = "default_2fa_rate_limit")]
+    pub two_factor_rate_limit_secs: u64,
 }
 
 impl Default for PamCfg {
     fn default() -> Self {
         Self {
-            notify_login:            default_true(),
-            two_factor_enabled:      false,
-            two_factor_timeout_secs: default_timeout(),
-            block_ip_cmd:            String::new(),
-            language:                default_language(),
+            notify_login:               default_true(),
+            two_factor_enabled:         false,
+            two_factor_timeout_secs:    default_timeout(),
+            block_ip_cmd:               String::new(),
+            language:                   default_language(),
+            two_factor_rate_limit_secs: 30,
         }
     }
 }
 
-fn default_true()     -> bool   { true          }
-fn default_timeout()  -> u64   { 60             }
-fn default_language() -> String { "auto".to_string() }
+fn default_true()           -> bool   { true              }
+fn default_timeout()        -> u64    { 60                }
+fn default_language()       -> String { "auto".to_string() }
+fn default_2fa_rate_limit() -> u64    { 30                }
 
 pub struct LoadedCfg {
     pub tg:             TelegramCfg,
@@ -123,6 +128,7 @@ password = "p"
         assert!(!cfg.two_factor_enabled);
         assert_eq!(cfg.two_factor_timeout_secs, 60);
         assert!(cfg.block_ip_cmd.is_empty());
+        assert_eq!(cfg.two_factor_rate_limit_secs, 30);
     }
 
     #[test]

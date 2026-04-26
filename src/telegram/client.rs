@@ -8,7 +8,7 @@ use crate::error::BotError;
 use crate::telegram::types::{InlineKeyboardMarkup, Update, WebhookInfo};
 
 pub struct TelegramClient {
-    pub(crate) base_url: String,
+    pub(crate) base_urls: Vec<String>,
     client: reqwest::Client,
     timeout: Duration,
     retries: u32,
@@ -29,7 +29,7 @@ impl TelegramClient {
             builder = builder.proxy(reqwest::Proxy::all(&cfg.proxy)?);
         }
         Ok(Self {
-            base_url: cfg.api_base_url(),
+            base_urls: cfg.api_base_urls(),
             client: builder.build()?,
             timeout: Duration::from_secs(cfg.request_timeout_secs),
             retries: cfg.request_retries,
@@ -37,59 +37,64 @@ impl TelegramClient {
     }
 
     /// POST a JSON-serializable body with retry on timeout/5xx.
+    /// Tries each URL in base_urls in order; moves to next URL only after all retries fail.
+    /// API errors (wrong params, auth) are returned immediately without trying other URLs.
     async fn post_json<T, B>(&self, method: &str, body: &B) -> Result<T, BotError>
     where
         T: for<'de> Deserialize<'de>,
         B: Serialize,
     {
-        let url = format!("{}{}", self.base_url, method);
         let mut last: Option<BotError> = None;
 
-        for attempt in 1..=self.retries {
-            let req = self.client.post(&url).json(body).send();
-            match tokio::time::timeout(self.timeout, req).await {
-                Err(_) => {
-                    warn!(method, attempt, "Telegram API timeout");
-                    last = Some(BotError::TelegramTimeout {
-                        method: method.to_string(),
-                    });
-                }
-                Ok(Err(e)) => {
-                    warn!(method, attempt, %e, "Telegram API network error");
-                    last = Some(BotError::TelegramNetwork(e));
-                }
-                Ok(Ok(resp)) => {
-                    if resp.status().is_server_error() {
-                        let status = resp.status().as_u16();
-                        warn!(method, attempt, status, "Telegram API 5xx");
+        for (url_idx, base_url) in self.base_urls.iter().enumerate() {
+            let url = format!("{}{}", base_url, method);
+
+            for attempt in 1..=self.retries {
+                let req = self.client.post(&url).json(body).send();
+                match tokio::time::timeout(self.timeout, req).await {
+                    Err(_) => {
+                        warn!(method, attempt, %url, "Telegram API timeout");
                         last = Some(BotError::TelegramTimeout {
                             method: method.to_string(),
                         });
-                    } else {
-                        let r: TgResult<T> = resp.json().await?;
-                        if !r.ok {
-                            return Err(BotError::TelegramApi {
-                                code: r.error_code.unwrap_or(0),
-                                description: r.description.unwrap_or_default(),
+                    }
+                    Ok(Err(e)) => {
+                        warn!(method, attempt, %url, %e, "Telegram API network error");
+                        last = Some(BotError::TelegramNetwork(e));
+                    }
+                    Ok(Ok(resp)) => {
+                        if resp.status().is_server_error() {
+                            let status = resp.status().as_u16();
+                            warn!(method, attempt, status, "Telegram API 5xx");
+                            last = Some(BotError::TelegramTimeout {
+                                method: method.to_string(),
+                            });
+                        } else {
+                            let r: TgResult<T> = resp.json().await?;
+                            if !r.ok {
+                                // API errors are not retried — wrong params, auth error, etc.
+                                return Err(BotError::TelegramApi {
+                                    code: r.error_code.unwrap_or(0),
+                                    description: r.description.unwrap_or_default(),
+                                });
+                            }
+                            return r.result.ok_or_else(|| BotError::TelegramApi {
+                                code: 0,
+                                description: "ok=true but result field missing".into(),
                             });
                         }
-                        return r.result.ok_or_else(|| BotError::TelegramApi {
-                            code: 0,
-                            description: "ok=true but result field missing".into(),
-                        });
                     }
                 }
+                if attempt < self.retries {
+                    sleep(Duration::from_millis(300 * attempt as u64)).await;
+                }
             }
-            if attempt < self.retries {
-                sleep(Duration::from_secs(2)).await;
+
+            if url_idx + 1 < self.base_urls.len() {
+                warn!(method, url = %base_url, "all retries failed, trying next API address");
             }
         }
 
-        error!(
-            method,
-            retries = self.retries,
-            "Telegram API unreachable after all retries"
-        );
         Err(last.unwrap_or_else(|| BotError::TelegramTimeout {
             method: method.to_string(),
         }))
@@ -104,7 +109,7 @@ impl TelegramClient {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let url = format!("{}{}", self.base_url, method);
+        let url = format!("{}{}", self.base_urls[0], method);
         let req = self.client.post(&url).multipart(form).send();
         let resp = tokio::time::timeout(Duration::from_secs(60), req)
             .await
@@ -195,7 +200,7 @@ impl TelegramClient {
             timeout: u64,
             limit: u32,
         }
-        let url = format!("{}getUpdates", self.base_url);
+        let url = format!("{}getUpdates", self.base_urls[0]);
         let outer = Duration::from_secs(timeout_secs + 10);
         let req = self
             .client
@@ -261,6 +266,7 @@ mod tests {
         TelegramConfig {
             token: "test_token".into(),
             api_address: String::new(),
+            api_addresses: vec![],
             proxy: String::new(),
             request_timeout_secs: 5,
             request_retries: 2,
@@ -275,7 +281,8 @@ mod tests {
     #[test]
     fn test_base_url() {
         let client = TelegramClient::new(&test_cfg()).unwrap();
-        assert!(client.base_url.contains("api.telegram.org"));
-        assert!(client.base_url.contains("test_token"));
+        assert_eq!(client.base_urls.len(), 1);
+        assert!(client.base_urls[0].contains("api.telegram.org"));
+        assert!(client.base_urls[0].contains("test_token"));
     }
 }

@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,6 +24,10 @@ pub fn create_pending(id: &str) -> io::Result<PathBuf> {
         .mode(0o660)
         .open(&path)?;
     f.write_all(b"pending")?;
+    // Force 0660 explicitly — OpenOptions::mode() is applied before umask,
+    // and sshd typically runs with umask 0022/0027 which strips group-write,
+    // preventing the bot from writing the approve/deny response.
+    f.set_permissions(std::fs::Permissions::from_mode(0o660))?;
     Ok(path)
 }
 

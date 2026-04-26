@@ -19,6 +19,7 @@ pub struct BotContext {
     pub config: Arc<Config>,
     pub tg: Arc<TelegramClient>,
     pub lang: Lang,
+    pub rate_limit: Arc<tokio::sync::Mutex<std::collections::HashMap<i64, std::time::Instant>>>,
 }
 
 pub async fn dispatch(update: &Update, ctx: &BotContext) {
@@ -65,6 +66,18 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
     // ── PAM callbacks ─────────────────────────────────────────────────────
     if text.starts_with("pam_") && handle_pam_callback(text, chat_id, ctx).await {
         return;
+    }
+
+    // Per-user command rate limiting (0 = disabled)
+    if ctx.config.bot.command_rate_limit_secs > 0 {
+        let now = std::time::Instant::now();
+        let mut map = ctx.rate_limit.lock().await;
+        if let Some(last) = map.get(&chat_id) {
+            if now.duration_since(*last).as_secs() < ctx.config.bot.command_rate_limit_secs {
+                return; // silently drop — prevents runaway floods
+            }
+        }
+        map.insert(chat_id, now);
     }
 
     let (cmd_name, args) = parse_input(text);
@@ -355,7 +368,14 @@ async fn handle_pam_callback(text: &str, chat_id: i64, ctx: &BotContext) -> bool
         }
         let path  = format!("/run/tgbot/pam/{}", rest);
         let value = if approved { "approved" } else { "denied" };
-        match std::fs::write(&path, value) {
+        // create(false) prevents recreating the file if PAM already timed out and
+        // removed it — avoids orphaned files and false-success replies to admin.
+        use std::io::Write as _;
+        let write_result = std::fs::OpenOptions::new()
+            .write(true).create(false).truncate(true)
+            .open(&path)
+            .and_then(|mut f| f.write_all(value.as_bytes()));
+        match write_result {
             Ok(_) => {
                 let reply = if approved { ctx.lang.pam_approved() } else { ctx.lang.pam_denied() };
                 let _ = send(&ctx.tg, chat_id, reply, None).await;
@@ -381,6 +401,9 @@ async fn handle_pam_callback(text: &str, chat_id: i64, ctx: &BotContext) -> bool
             &format!("sudo /usr/bin/loginctl terminate-session {}", sid),
             10,
         ).await {
+            Ok(out) if out.contains("[exit:") => {
+                let _ = send(&ctx.tg, chat_id, &out.trim().to_string(), None).await;
+            }
             Ok(_)  => { let _ = send(&ctx.tg, chat_id, ctx.lang.pam_session_terminated(), None).await; }
             Err(e) => send_error(&ctx.tg, chat_id, &e, ctx.lang).await,
         }

@@ -1,43 +1,48 @@
 # tgbot configuration — copy to /etc/tgbot/config.toml
-# chmod 600 /etc/tgbot/config.toml && chown tgbot:tgbot /etc/tgbot/config.toml
+# Permissions: chmod 600 /etc/tgbot/config.toml && chown tgbot:tgbot /etc/tgbot/config.toml
 
 [bot]
-# Режим: "webhook" или "polling"
+# Mode: "webhook" or "polling"
 mode = "webhook"
-# URL-путь webhook (безопасность через obscurity)
+# Webhook URL path (security by obscurity — use something unpredictable)
 webhook_path = "/secretwebhook"
-# Bind: TCP или Unix socket
+# Bind address: TCP socket or Unix socket
 # bind = "127.0.0.1:8080"
 bind = "unix:/run/tgbot/bot.sock"
-# Таймаут shell-команд (секунды)
+# Shell command timeout (seconds)
 exec_timeout_secs = 30
-# IP-фильтр: "telegram" | "disabled" | ["1.2.3.0/24"]
+# IP filter for webhook: "telegram" | "disabled" | ["1.2.3.0/24", ...]
 webhook_ip_whitelist = "telegram"
-# URL вебхука, который Telegram будет вызывать. Если задан — бот автоматически
-# регистрирует (или обновляет) вебхук при старте в режиме webhook.
-# Если не задан — управляй вебхуком вручную (make set-webhook).
+# Public URL Telegram will POST updates to. If set, the bot registers (or updates)
+# the webhook automatically on startup in webhook mode.
+# Leave empty to manage the webhook manually (make set-webhook).
 webhook_address = ""
-# true  — всегда вызывать setWebhook при старте (даже если уже зарегистрирован)
-# false — проверить getWebhookInfo и вызвать setWebhook только при необходимости
+# true  — always call setWebhook on startup even if already registered
+# false — check getWebhookInfo first, call setWebhook only if needed
 always_set_webhook = false
-# Уведомить суперадмина, если при старте обнаружена ошибка вебхука
+# Notify super-admin if a webhook error is detected at startup
 notify_on_webhook_error = true
-# Язык интерфейса: "ru", "en" или "auto" (определяется из LANG/LC_ALL)
 # Interface language: "ru", "en", or "auto" (detected from LANG/LC_ALL env var)
 language = "auto"
+# Drop commands if the same admin sends faster than this interval (seconds, 0 = disabled)
+command_rate_limit_secs = 0
 
 [telegram]
 token = "123456:ABC-DEF-REPLACE-ME"
-# Кастомный Telegram API адрес (пусто = api.telegram.org)
+# Single Telegram Bot API address (legacy, use api_addresses for fallback support)
 api_address = ""
-# SOCKS5/HTTP прокси (пусто = не использовать)
+# Ordered list of Telegram Bot API addresses — tried in sequence on failure.
+# Useful in regions where api.telegram.org is blocked. Leave empty to use api.telegram.org.
+# api_addresses = ["https://your-local-mirror.example.com", "https://api.telegram.org"]
+api_addresses = []
+# SOCKS5/HTTP proxy (empty = disabled)
 # proxy = "socks5://user:pass@host:1080"
 proxy = ""
 request_timeout_secs = 10
 request_retries = 3
 
 [admins]
-# Первая запись — super-admin (уведомления + sudo)
+# First entry is super-admin (receives alerts, can use sudo commands)
 "123456789" = "BestAdmin"
 
 [zabbix]
@@ -46,76 +51,72 @@ user = "zabbix_api"
 password = "REPLACE_ME"
 
 [speedtest]
-# URL Ookla-совместимого сервера для тестирования скорости.
-# Формат: https://<host>:<port>/upload.php
+# URL of an Ookla-compatible speedtest server.
+# Format: https://<host>:<port>/upload.php
 #
-# Если оставить пустым — бот автоматически выберет ближайший сервер
-# через speedtest.net API (требует доступ к speedtest.net).
+# If empty, the bot auto-selects the nearest server via the speedtest.net API
+# (requires access to speedtest.net).
 #
-# Примеры серверов (Россия):
-#   server_url = "https://speedtest.selectel.ru:8080/upload.php"   # Selectel
-#   server_url = "https://spd.mgts.ru:8080/upload.php"             # МГТС
-#   server_url = "https://speedtest.rt.ru:8080/upload.php"         # Ростелеком
-#
-# Найти ближайший: https://www.speedtest.net/api/js/servers?engine=js&https_functional=true&limit=10
+# Find a nearby server: https://www.speedtest.net/api/js/servers?engine=js&https_functional=true&limit=10
 server_url = ""
 
 [monitor]
-# Отправлять уведомления super-admin при превышении порогов
+# Send alerts to super-admin when thresholds are exceeded
 enabled = false
-# Период проверки (секунды)
+# Check interval (seconds)
 interval_secs = 60
-# Порог CPU (%), RAM (%), диска /
+# CPU (%), RAM (%), and root disk thresholds
 cpu_warn = 85
 ram_warn = 90
 disk_warn = 85
-# Повторное уведомление если проблема не ушла (секунды)
+# Re-alert interval if the issue persists (seconds)
 remind_secs = 1800
 
 [pam]
-# Включить PAM-интеграцию (уведомления и/или 2FA).
-# Требует установки pam_tgbot.so и настройки /etc/pam.d/.
+# Enable PAM integration (requires pam_tgbot.so installed)
 enabled = false
-
-# Уведомлять суперадмина при открытии сессии
-notify_login = true
-
-# Двухфакторная аутентификация через Telegram.
-# При включении: после первого фактора (пароль/ключ) суперадмину
-# поступает запрос с кнопками «Одобрить» / «Отклонить».
+# Notify super-admin on every SSH login
+notify_login = false
+# Require Telegram approval for every SSH login (2FA)
 two_factor_enabled = false
+# How long to wait for admin approval before denying (seconds)
 two_factor_timeout_secs = 60
-
-# Имя команды из [[commands]] для блокировки IP (пусто — кнопка не показывается)
-block_ip_cmd = "ban-cs"
+# Minimum seconds between 2FA requests for the same user (0 = disabled).
+# Prevents flooding the admin with approval prompts from repeated auth attempts.
+two_factor_rate_limit_secs = 30
+# Command to block the source IP when admin clicks "Block IP"
+# Use {arg1} (sanitized) not {args} to prevent shell injection from attacker-controlled IP.
+# Example: block_ip_cmd = "sudo /usr/bin/cscli decisions add --ip"
+block_ip_cmd = ""
+# Language for PAM notifications: "auto", "ru", "en"
+language = "auto"
 
 [[commands]]
 name = "unban"
 cmd = "sudo /usr/bin/fail2ban-client unban {arg1}"
-desc = "Разблокировать IP (fail2ban). /unban <IP>"
+desc = "Unban IP in fail2ban. /unban <IP>"
 sudo_check = true
 
 [[commands]]
 name = "unban-cs"
 cmd = "sudo /usr/bin/cscli decisions delete -i {arg1}"
-desc = "Разблокировать IP (CrowdSec). /unban-cs <IP>"
+desc = "Unban IP in CrowdSec. /unban-cs <IP>"
 sudo_check = true
-
 
 [[commands]]
 name = "mikrotik"
 cmd = "sudo /etc/sh/mikrotik.sh {arg1}"
-desc = "MikroTik. Аргументы: update | geoip_on | geoip_off"
+desc = "MikroTik control. Args: update | geoip_on | geoip_off"
 sudo_check = true
 
 [[commands]]
 name = "snft"
 cmd = "sudo /usr/bin/snft {args}"
-desc = "SNFT anti-DDoS. /snft -d -f 20"
+desc = "SNFT anti-DDoS. Example: /snft -d -f 20"
 sudo_check = true
 
 [[commands]]
 name = "sudo"
 cmd = "{args}"
-desc = "Произвольная команда (только super-admin)"
+desc = "Run arbitrary command (super-admin only)"
 sudo_check = false

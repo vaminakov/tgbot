@@ -1,0 +1,123 @@
+# Конфигурация tgbot — скопируйте в /etc/tgbot/config.toml
+# Права: chmod 600 /etc/tgbot/config.toml && chown tgbot:tgbot /etc/tgbot/config.toml
+
+[bot]
+# Режим работы: "webhook" или "polling"
+mode = "webhook"
+# URL-путь вебхука (защита через неизвестность — используйте непредсказуемую строку)
+webhook_path = "/secretwebhook"
+# Адрес для прослушивания: TCP-сокет или Unix-сокет
+# bind = "127.0.0.1:8080"
+bind = "unix:/run/tgbot/bot.sock"
+# Таймаут выполнения shell-команд (секунды)
+exec_timeout_secs = 30
+# IP-фильтр для вебхука: "telegram" | "disabled" | ["1.2.3.0/24", ...]
+webhook_ip_whitelist = "telegram"
+# Публичный URL, на который Telegram будет отправлять обновления.
+# Если задан — бот автоматически регистрирует вебхук при старте в режиме webhook.
+# Оставьте пустым для ручного управления (make set-webhook).
+webhook_address = ""
+# true  — всегда вызывать setWebhook при старте (даже если уже зарегистрирован)
+# false — сначала проверить getWebhookInfo, вызвать setWebhook только при необходимости
+always_set_webhook = false
+# Уведомить суперадмина об ошибке вебхука при старте
+notify_on_webhook_error = true
+# Язык интерфейса: "ru", "en" или "auto" (определяется из LANG/LC_ALL)
+language = "auto"
+# Игнорировать команды, если тот же администратор отправляет их чаще указанного интервала (секунды, 0 = отключено)
+command_rate_limit_secs = 0
+
+[telegram]
+token = "123456:ABC-DEF-REPLACE-ME"
+# Единственный адрес API Telegram (устаревший вариант, используйте api_addresses для поддержки fallback)
+api_address = ""
+# Упорядоченный список адресов Telegram Bot API — перебираются по порядку при недоступности.
+# Полезно в регионах, где api.telegram.org заблокирован. Оставьте пустым для использования api.telegram.org.
+# api_addresses = ["https://your-local-mirror.example.com", "https://api.telegram.org"]
+api_addresses = []
+# SOCKS5/HTTP прокси (пусто = отключено)
+# proxy = "socks5://user:pass@host:1080"
+proxy = ""
+request_timeout_secs = 10
+request_retries = 3
+
+[admins]
+# Первая запись — суперадмин (получает уведомления, может выполнять sudo-команды)
+"123456789" = "BestAdmin"
+
+[zabbix]
+url = "https://monit.example.com/"
+user = "zabbix_api"
+password = "REPLACE_ME"
+
+[speedtest]
+# URL Ookla-совместимого сервера для тестирования скорости.
+# Формат: https://<host>:<port>/upload.php
+#
+# Если пусто — бот автоматически выберет ближайший сервер через API speedtest.net
+# (требуется доступ к speedtest.net).
+#
+# Найти ближайший сервер: https://www.speedtest.net/api/js/servers?engine=js&https_functional=true&limit=10
+server_url = ""
+
+[monitor]
+# Отправлять уведомления суперадмину при превышении порогов
+enabled = false
+# Интервал проверки (секунды)
+interval_secs = 60
+# Пороги CPU (%), RAM (%), диска /
+cpu_warn = 85
+ram_warn = 90
+disk_warn = 85
+# Интервал повторного уведомления если проблема не исчезла (секунды)
+remind_secs = 1800
+
+[pam]
+# Включить PAM-интеграцию (требует установки pam_tgbot.so)
+enabled = false
+# Уведомлять суперадмина при каждом SSH-входе
+notify_login = false
+# Требовать подтверждения в Telegram при каждом SSH-входе (2FA)
+two_factor_enabled = false
+# Время ожидания подтверждения от администратора (секунды)
+two_factor_timeout_secs = 60
+# Минимальный интервал между запросами 2FA для одного пользователя (секунды, 0 = отключено).
+# Защищает администратора от лавины запросов при повторных попытках входа.
+two_factor_rate_limit_secs = 30
+# Команда для блокировки IP при нажатии кнопки "Блокировать IP"
+# Используйте {arg1} (с санитизацией), а не {args}, чтобы исключить инъекцию
+# shell-команд через контролируемый атакующим IP-адрес.
+# Пример: block_ip_cmd = "sudo /usr/bin/cscli decisions add --ip"
+block_ip_cmd = ""
+# Язык уведомлений PAM: "auto", "ru", "en"
+language = "auto"
+
+[[commands]]
+name = "unban"
+cmd = "sudo /usr/bin/fail2ban-client unban {arg1}"
+desc = "Разблокировать IP (fail2ban). /unban <IP>"
+sudo_check = true
+
+[[commands]]
+name = "unban-cs"
+cmd = "sudo /usr/bin/cscli decisions delete -i {arg1}"
+desc = "Разблокировать IP (CrowdSec). /unban-cs <IP>"
+sudo_check = true
+
+[[commands]]
+name = "mikrotik"
+cmd = "sudo /etc/sh/mikrotik.sh {arg1}"
+desc = "Управление MikroTik. Аргументы: update | geoip_on | geoip_off"
+sudo_check = true
+
+[[commands]]
+name = "snft"
+cmd = "sudo /usr/bin/snft {args}"
+desc = "SNFT anti-DDoS. Пример: /snft -d -f 20"
+sudo_check = true
+
+[[commands]]
+name = "sudo"
+cmd = "{args}"
+desc = "Произвольная команда (только суперадмин)"
+sudo_check = false
