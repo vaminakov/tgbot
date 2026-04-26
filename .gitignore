@@ -1,5 +1,8 @@
 # Rust build output
 /target/
+/pam_tgbot/target/
+docs
+arch-pkg/*.pkg.tar.zst
 
 # Local development config (never commit real tokens/passwords)
 config.toml

@@ -142,13 +142,13 @@ pub async fn run(ctx: Arc<BotContext>) {
                     match should_alert(&cpu_st, pct >= cfg.cpu_warn as u64, remind_secs) {
                         Some(AlertAction::Alert) => {
                             fire(&ctx, super_id,
-                                &format!("⚠️ CPU: {}% (порог {}%)", pct, cfg.cpu_warn)).await;
+                                &ctx.lang.monitor_cpu_alert(pct as u8, cfg.cpu_warn)).await;
                             cpu_st.in_alert = true;
                             cpu_st.last_alert = Some(Instant::now());
                         }
                         Some(AlertAction::Recover) => {
                             fire(&ctx, super_id,
-                                &format!("✅ CPU: {}% — норма восстановлена", pct)).await;
+                                &ctx.lang.monitor_cpu_recover(pct as u8)).await;
                             cpu_st.in_alert = false;
                             cpu_st.last_alert = None;
                         }
@@ -164,13 +164,13 @@ pub async fn run(ctx: Arc<BotContext>) {
             match should_alert(&ram_st, pct >= cfg.ram_warn as u64, remind_secs) {
                 Some(AlertAction::Alert) => {
                     fire(&ctx, super_id,
-                        &format!("⚠️ RAM: {}% (порог {}%)", pct, cfg.ram_warn)).await;
+                        &ctx.lang.monitor_ram_alert(pct as u8, cfg.ram_warn)).await;
                     ram_st.in_alert = true;
                     ram_st.last_alert = Some(Instant::now());
                 }
                 Some(AlertAction::Recover) => {
                     fire(&ctx, super_id,
-                        &format!("✅ RAM: {}% — норма восстановлена", pct)).await;
+                        &ctx.lang.monitor_ram_recover(pct as u8)).await;
                     ram_st.in_alert = false;
                     ram_st.last_alert = None;
                 }
@@ -183,13 +183,13 @@ pub async fn run(ctx: Arc<BotContext>) {
             match should_alert(&disk_st, pct >= cfg.disk_warn as u64, remind_secs) {
                 Some(AlertAction::Alert) => {
                     fire(&ctx, super_id,
-                        &format!("⚠️ Диск /: {}% (порог {}%)", pct, cfg.disk_warn)).await;
+                        &ctx.lang.monitor_disk_alert(pct as u8, cfg.disk_warn)).await;
                     disk_st.in_alert = true;
                     disk_st.last_alert = Some(Instant::now());
                 }
                 Some(AlertAction::Recover) => {
                     fire(&ctx, super_id,
-                        &format!("✅ Диск /: {}% — норма восстановлена", pct)).await;
+                        &ctx.lang.monitor_disk_recover(pct as u8)).await;
                     disk_st.in_alert = false;
                     disk_st.last_alert = None;
                 }

@@ -8,6 +8,7 @@ Type=simple
 User=tgbot
 Group=tgbot
 
+ExecStartPre=+/usr/bin/install -d -m 2770 -o tgbot -g tgbot /run/tgbot/pam
 ExecStart=/usr/bin/tgbot --config /etc/tgbot/config.toml
 Restart=on-failure
 RestartSec=5

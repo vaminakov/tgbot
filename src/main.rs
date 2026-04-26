@@ -1,4 +1,5 @@
 mod bot;
+mod i18n;
 mod config;
 mod error;
 mod monitor;
@@ -14,6 +15,7 @@ use tracing::{info, warn};
 
 use bot::{security::IpWhitelist, BotContext};
 use config::{BotMode, Config};
+use i18n::Lang;
 use telegram::client::TelegramClient;
 use telegram::types::InlineKeyboardMarkup;
 
@@ -141,9 +143,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut patched = config.clone();
     sudo_check_commands(&mut patched.commands).await;
 
+    let lang = Lang::from_config(&config.bot.language);
     let ctx = Arc::new(BotContext {
         config: Arc::new(patched),
         tg: Arc::clone(&tg),
+        lang,
     });
 
     let monitor_handle = tokio::spawn(monitor::run(Arc::clone(&ctx)));

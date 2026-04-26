@@ -22,6 +22,9 @@ webhook_address = ""
 always_set_webhook = false
 # Уведомить суперадмина, если при старте обнаружена ошибка вебхука
 notify_on_webhook_error = true
+# Язык интерфейса: "ru", "en" или "auto" (определяется из LANG/LC_ALL)
+# Interface language: "ru", "en", or "auto" (detected from LANG/LC_ALL env var)
+language = "auto"
 
 [telegram]
 token = "123456:ABC-DEF-REPLACE-ME"
@@ -68,6 +71,23 @@ ram_warn = 90
 disk_warn = 85
 # Повторное уведомление если проблема не ушла (секунды)
 remind_secs = 1800
+
+[pam]
+# Включить PAM-интеграцию (уведомления и/или 2FA).
+# Требует установки pam_tgbot.so и настройки /etc/pam.d/.
+enabled = false
+
+# Уведомлять суперадмина при открытии сессии
+notify_login = true
+
+# Двухфакторная аутентификация через Telegram.
+# При включении: после первого фактора (пароль/ключ) суперадмину
+# поступает запрос с кнопками «Одобрить» / «Отклонить».
+two_factor_enabled = false
+two_factor_timeout_secs = 60
+
+# Имя команды из [[commands]] для блокировки IP (пусто — кнопка не показывается)
+block_ip_cmd = "ban-cs"
 
 [[commands]]
 name = "unban"

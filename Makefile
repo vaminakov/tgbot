@@ -10,6 +10,17 @@ SVCUSER  := tgbot
 build:
 	cargo build --release
 
+.PHONY: pam
+pam:
+	cd pam_tgbot && cargo build --release
+
+.PHONY: install-pam
+install-pam: pam
+	install -Dm755 pam_tgbot/target/release/libpam_tgbot.so \
+	    /usr/lib/security/pam_tgbot.so
+	@echo "pam_tgbot.so installed to /usr/lib/security/"
+	@echo "See arch-pkg/tgbot.install for pam.d and sudoers setup."
+
 .PHONY: dev
 dev:
 	RUST_LOG=tgbot=debug cargo run -- --config config.toml
@@ -123,3 +134,4 @@ delete-webhook:
 .PHONY: clean
 clean:
 	cargo clean
+	cd pam_tgbot && cargo clean

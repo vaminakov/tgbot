@@ -13,6 +13,8 @@ pub struct Config {
     #[serde(default)]
     pub monitor: MonitorConfig,
     #[serde(default)]
+    pub pam: PamConfig,
+    #[serde(default)]
     pub commands: Vec<CommandConfig>,
 }
 
@@ -65,6 +67,8 @@ pub struct BotConfig {
     pub always_set_webhook: bool,
     #[serde(default = "defaults::notify_on_webhook_error")]
     pub notify_on_webhook_error: bool,
+    #[serde(default = "defaults::language")]
+    pub language: String,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -158,6 +162,38 @@ impl Default for MonitorConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct PamConfig {
+    /// PAM integration enabled (notifications and/or 2FA).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Send notification when a session opens.
+    #[serde(default = "defaults::pam_notify_login")]
+    pub notify_login: bool,
+    /// Block login until super-admin approves in Telegram.
+    #[serde(default)]
+    pub two_factor_enabled: bool,
+    /// Seconds before 2FA request times out.
+    #[serde(default = "defaults::pam_timeout")]
+    pub two_factor_timeout_secs: u64,
+    /// Bot command name to block the remote IP (e.g. "ban-cs"). Empty = no button.
+    #[serde(default)]
+    pub block_ip_cmd: String,
+}
+
+impl Default for PamConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            notify_login: defaults::pam_notify_login(),
+            two_factor_enabled: false,
+            two_factor_timeout_secs: defaults::pam_timeout(),
+            block_ip_cmd: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct CommandConfig {
     pub name: String,
     pub cmd: String,
@@ -200,6 +236,9 @@ mod defaults {
     pub fn ram_warn() -> u8 { 90 }
     pub fn disk_warn() -> u8 { 85 }
     pub fn remind_secs() -> u64 { 1800 }
+    pub fn pam_notify_login() -> bool { true }
+    pub fn pam_timeout()       -> u64  { 60  }
+    pub fn language() -> String { "auto".to_string() }
 }
 
 #[cfg(test)]
@@ -330,5 +369,25 @@ server_url = ""
         assert!(cfg.monitor.enabled);
         assert_eq!(cfg.monitor.cpu_warn, 70);
         assert_eq!(cfg.monitor.ram_warn, 90); // still default
+    }
+
+    #[test]
+    fn test_pam_config_defaults() {
+        let cfg: Config = toml::from_str(MINIMAL).unwrap();
+        assert!(!cfg.pam.enabled);
+        assert!(cfg.pam.notify_login);
+        assert!(!cfg.pam.two_factor_enabled);
+        assert_eq!(cfg.pam.two_factor_timeout_secs, 60);
+        assert!(cfg.pam.block_ip_cmd.is_empty());
+    }
+
+    #[test]
+    fn test_pam_config_explicit() {
+        let toml = MINIMAL.to_string()
+            + "\n[pam]\nenabled = true\nblock_ip_cmd = \"ban-cs\"\n";
+        let cfg: Config = toml::from_str(&toml).unwrap();
+        assert!(cfg.pam.enabled);
+        assert_eq!(cfg.pam.block_ip_cmd, "ban-cs");
+        assert_eq!(cfg.pam.two_factor_timeout_secs, 60); // default preserved
     }
 }

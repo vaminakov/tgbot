@@ -1,3 +1,7 @@
+*Русская версия: [README.ru.md](README.ru.md)*
+
+---
+
 # tgbot
 
 Telegram bot for server management — written in Rust. Single compiled binary, no interpreter, no runtime dependencies.
@@ -14,6 +18,7 @@ Telegram bot for server management — written in Rust. Single compiled binary, 
 - **Whois / RDAP** — IP info (country, city, org, registrant contacts) via RDAP over HTTPS
 - **Safe reboot** — sends acknowledgement before triggering `systemctl reboot --force`
 - **Threshold monitor** — background loop alerts super-admin on CPU/RAM/disk threshold breaches
+- **PAM module** — `pam_tgbot.so`: login notifications to super-admin with inline buttons, and optional Telegram-based 2FA
 - **CLI sender** — send Telegram messages from scripts/cron: `tgbot -m <chat_id> "text"`
 - **IP whitelist** — Telegram CIDRs, custom CIDR list, or disabled (for reverse proxy)
 - **Proxy support** — SOCKS5/HTTP via config
@@ -91,7 +96,7 @@ disk_warn = 85        # alert when disk /  >= 85%
 remind_secs = 1800    # repeat alert every 30 min while threshold is exceeded
 ```
 
-When a threshold is breached, super-admin receives e.g. `⚠️ CPU: 91% (порог 85%)`. When it drops back below, they receive `✅ CPU: 72% — норма восстановлена`.
+When a threshold is breached, super-admin receives e.g. `⚠️ CPU: 91% (threshold 85%)`. When it drops back below, they receive `✅ CPU: 72% — back to normal`.
 
 ### Bot modes
 
@@ -210,7 +215,7 @@ sudo journalctl -u tgbot -f
 ### Webhook with nginx
 
 ```nginx
-location /weq87rtfsadkjlqe4u98 {
+location /secret_webhook {
     proxy_pass http://unix:/run/tgbot/bot.sock;
     proxy_set_header Host $host;
 }
@@ -219,7 +224,7 @@ location /weq87rtfsadkjlqe4u98 {
 Then register the webhook:
 
 ```bash
-sudo make set-webhook URL=https://your.domain/weq87rtfsadkjlqe4u98
+sudo make set-webhook URL=https://your.domain/secret_webhook
 ```
 
 ### Updates
@@ -237,6 +242,58 @@ sudo make update   # build → install → restart
 - **Arg sanitization**: `{arg1}` validated against `^[a-zA-Z0-9._/:-]+$`; shell metacharacters rejected
 - **No temp files**: Zabbix graphs are fetched and forwarded entirely in memory
 - **rustls**: No OpenSSL dependency; TLS via rustls
+
+## PAM module
+
+`pam_tgbot.so` is a Rust shared library installed into `/usr/lib/security/`. It integrates with the Linux PAM stack to notify the super-admin of logins and optionally require Telegram approval before granting access.
+
+### Features
+
+| PAM type | Behaviour |
+|---|---|
+| `session optional pam_tgbot.so` | Sends a login notification with **[Terminate session]** and **[Block IP]** buttons |
+| `auth required pam_tgbot.so` | Blocks login; super-admin receives ✅/❌ buttons; login proceeds only on approval |
+
+### Setup
+
+**1. Configure `/etc/tgbot/config.toml`:**
+
+```toml
+[pam]
+enabled                 = true
+notify_login            = true
+two_factor_enabled      = false    # set true for full 2FA
+two_factor_timeout_secs = 60
+block_ip_cmd            = "ban-cs" # name of your block command in [[commands]]
+```
+
+**2. Edit `/etc/pam.d/sshd`** (start with notifications only):
+
+```
+session  optional  pam_tgbot.so
+```
+
+For 2FA (⚠️ **ensure you have console/backup access before enabling**):
+
+```
+# Add AFTER the existing auth lines:
+auth     required  pam_tgbot.so
+session  optional  pam_tgbot.so
+```
+
+**3. Allow session termination (optional — for the Terminate button):**
+
+```bash
+echo 'tgbot ALL=(ALL) NOPASSWD: /usr/bin/loginctl' \
+    | sudo tee /etc/sudoers.d/tgbot-pam
+sudo chmod 440 /etc/sudoers.d/tgbot-pam
+```
+
+### Notes
+
+- The bot (`tgbot.service`) must be running. If it is down, **2FA is skipped** (fail-open) and notifications are not sent.
+- The **Block IP** button sends `<block_ip_cmd> <ip>` as a Telegram callback, which the bot routes to your existing configured command.
+- Do not enable `two_factor_enabled = true` on SSH without a tested fallback login path.
 
 ## Project structure
 
@@ -272,3 +329,5 @@ tgbot/
     └── monitor/
         └── mod.rs             # Background threshold monitor with alert state machine
 ```
+
+`pam_tgbot/` is a **separate cdylib crate** — built with `make pam`, installed with `make install-pam`. See the [PAM module](#pam-module) section for setup.

@@ -8,6 +8,7 @@ use tracing::{info, warn};
 
 use crate::config::Config;
 use crate::error::BotError;
+use crate::i18n::Lang;
 use crate::telegram::client::TelegramClient;
 use crate::telegram::types::{default_keyboard, Update};
 use commands::{exec_shell, help_text, parse_input, run_configured_cmd};
@@ -17,6 +18,7 @@ use sender::{send, send_error};
 pub struct BotContext {
     pub config: Arc<Config>,
     pub tg: Arc<TelegramClient>,
+    pub lang: Lang,
 }
 
 pub async fn dispatch(update: &Update, ctx: &BotContext) {
@@ -45,11 +47,11 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
         let _ = send(
             &ctx.tg,
             chat_id,
-            &format!("{}, не пиши мне больше!", update.first_name()),
+            &ctx.lang.unauthorized_reply(&update.first_name()),
             None,
         )
         .await;
-        warn!(chat_id, %username, "unauthorized access attempt");
+        warn!(chat_id, %username, "Got message from {} (chat_id: {}) — unauthorized, rejected.", username, chat_id);
         return;
     }
 
@@ -59,6 +61,12 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
     }
 
     info!(chat_id, text, "command received");
+
+    // ── PAM callbacks ─────────────────────────────────────────────────────
+    if text.starts_with("pam_") && handle_pam_callback(text, chat_id, ctx).await {
+        return;
+    }
+
     let (cmd_name, args) = parse_input(text);
 
     // sudo restricted to super-admin
@@ -66,7 +74,7 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
         let _ = send(
             &ctx.tg,
             chat_id,
-            "Команда sudo доступна только super-admin.",
+            ctx.lang.sudo_super_admin_only(),
             None,
         )
         .await;
@@ -75,7 +83,7 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
 
     // ── Reboot (special: message must be sent before execution) ──────────
     if cmd_name == "reboot" {
-        let _ = send(&ctx.tg, chat_id, "🔄 Перезагрузка...", None).await;
+        let _ = send(&ctx.tg, chat_id, ctx.lang.reboot_msg(), None).await;
         tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let _ = tokio::process::Command::new("sudo")
@@ -91,17 +99,18 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
 
     // ── Built-in commands ─────────────────────────────────────────────────
     let builtin: Option<Result<String, BotError>> = match cmd_name {
-        "status" => Some(crate::system::status().await),
+        "status" => Some(crate::system::status(ctx.lang).await),
         "speedtest" => Some(handle_speedtest(&ctx.config.speedtest.server_url).await),
-        "whois" => Some(crate::whois::lookup(args.first().copied().unwrap_or("")).await),
+        "whois" => Some(crate::whois::lookup(args.first().copied().unwrap_or(""), ctx.lang).await),
         "ping" => Some(
             handle_ping(
                 args.first().copied().unwrap_or(""),
                 ctx.config.bot.exec_timeout_secs.min(15),
+                ctx.lang,
             )
             .await,
         ),
-        "top" => Some(handle_top().await),
+        "top" => Some(handle_top(ctx.lang).await),
         "zbx_graph" => Some(handle_zbx_graph(&args, chat_id, ctx).await),
         _ => None,
     };
@@ -112,7 +121,7 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
                 let _ = send(&ctx.tg, chat_id, t, None).await;
             }
             Ok(_) => {} // already sent (e.g. document)
-            Err(ref e) => send_error(&ctx.tg, chat_id, e).await,
+            Err(ref e) => send_error(&ctx.tg, chat_id, e, ctx.lang).await,
         }
         return;
     }
@@ -122,10 +131,10 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
         let timeout = ctx.config.bot.exec_timeout_secs;
         match run_configured_cmd(cmd_cfg, &args, timeout).await {
             Ok(out) => {
-                let msg = if out.trim().is_empty() { "✅ Выполнено." } else { &out };
+                let msg = if out.trim().is_empty() { ctx.lang.executed() } else { &out };
                 let _ = send(&ctx.tg, chat_id, msg, None).await;
             }
-            Err(e) => send_error(&ctx.tg, chat_id, &e).await,
+            Err(e) => send_error(&ctx.tg, chat_id, &e, ctx.lang).await,
         }
         return;
     }
@@ -136,7 +145,7 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
     let _ = send(
         &ctx.tg,
         chat_id,
-        &help_text(&ctx.config.commands, zabbix_configured),
+        &help_text(&ctx.config.commands, zabbix_configured, ctx.lang),
         Some(&kb),
     )
     .await;
@@ -233,7 +242,7 @@ fn read_proc_stats() -> (CpuStat, HashMap<u32, ProcStat>) {
     (cpu, procs)
 }
 
-async fn handle_top() -> Result<String, BotError> {
+async fn handle_top(lang: Lang) -> Result<String, BotError> {
     let loadavg = tokio::fs::read_to_string("/proc/loadavg")
         .await
         .map_err(BotError::Io)?;
@@ -293,9 +302,9 @@ async fn handle_top() -> Result<String, BotError> {
     )];
 
     lines.push(String::new());
-    lines.push("⚡ Топ CPU:".to_string());
+    lines.push(lang.top_cpu_header().to_string());
     if cpu_list.is_empty() {
-        lines.push("  (нет активных процессов)".to_string());
+        lines.push(lang.top_cpu_empty().to_string());
     } else {
         for (name, pct) in &cpu_list {
             lines.push(format!("• {}: {:.1}%", name, pct));
@@ -303,9 +312,9 @@ async fn handle_top() -> Result<String, BotError> {
     }
 
     lines.push(String::new());
-    lines.push("💾 Топ RAM:".to_string());
+    lines.push(lang.top_ram_header().to_string());
     if ram_list.is_empty() {
-        lines.push("  (нет данных)".to_string());
+        lines.push(lang.top_ram_empty().to_string());
     } else {
         for (name, kb) in &ram_list {
             lines.push(format!("• {}: {}", name, format_mem(*kb)));
@@ -324,10 +333,67 @@ async fn handle_speedtest(server_url: &str) -> Result<String, BotError> {
         })?
 }
 
-async fn handle_ping(host: &str, timeout_secs: u64) -> Result<String, BotError> {
+/// Handle PAM module callbacks: 2FA approve/deny and session kill.
+/// Returns true if the text was a recognized PAM callback (caller returns early).
+async fn handle_pam_callback(text: &str, chat_id: i64, ctx: &BotContext) -> bool {
+    if !ctx.config.pam.enabled {
+        // PAM integration disabled — consume pam_ callbacks silently rather than
+        // falling through to parse_input and producing "command not found".
+        return true;
+    }
+    if text.starts_with("pam_approve:") || text.starts_with("pam_deny:") {
+        let approved = text.starts_with("pam_approve:");
+        let rest = if approved {
+            &text["pam_approve:".len()..]
+        } else {
+            &text["pam_deny:".len()..]
+        };
+        // Validate: IPC ID must be 32 lowercase hex chars
+        if rest.len() != 32 || !rest.chars().all(|c| c.is_ascii_hexdigit()) {
+            let _ = send(&ctx.tg, chat_id, ctx.lang.pam_invalid_2fa_id(), None).await;
+            return true;
+        }
+        let path  = format!("/run/tgbot/pam/{}", rest);
+        let value = if approved { "approved" } else { "denied" };
+        match std::fs::write(&path, value) {
+            Ok(_) => {
+                let reply = if approved { ctx.lang.pam_approved() } else { ctx.lang.pam_denied() };
+                let _ = send(&ctx.tg, chat_id, reply, None).await;
+            }
+            Err(e) => {
+                let _ = send(
+                    &ctx.tg, chat_id,
+                    &ctx.lang.pam_ipc_error(&e),
+                    None,
+                ).await;
+            }
+        }
+        return true;
+    }
+
+    if let Some(sid) = text.strip_prefix("pam_kill:") {
+        // systemd session IDs are short alphanumeric strings (e.g. "1", "42", "c3")
+        if sid.is_empty() || sid.len() > 16 || !sid.chars().all(|c| c.is_ascii_alphanumeric()) {
+            let _ = send(&ctx.tg, chat_id, ctx.lang.pam_invalid_session_id(), None).await;
+            return true;
+        }
+        match exec_shell(
+            &format!("sudo /usr/bin/loginctl terminate-session {}", sid),
+            10,
+        ).await {
+            Ok(_)  => { let _ = send(&ctx.tg, chat_id, ctx.lang.pam_session_terminated(), None).await; }
+            Err(e) => send_error(&ctx.tg, chat_id, &e, ctx.lang).await,
+        }
+        return true;
+    }
+
+    false
+}
+
+async fn handle_ping(host: &str, timeout_secs: u64, lang: Lang) -> Result<String, BotError> {
     let host = host.trim();
     if host.is_empty() {
-        return Ok("Использование: /ping <хост или IP>".into());
+        return Ok(lang.ping_usage().into());
     }
     sanitize_arg(host)?;
     exec_shell(&format!("ping -c 4 -W 3 -- {}", host), timeout_secs).await
@@ -349,10 +415,10 @@ async fn handle_zbx_graph(
     ctx: &BotContext,
 ) -> Result<String, BotError> {
     if ctx.config.zabbix.url.is_empty() {
-        return Ok("Zabbix не настроен.".into());
+        return Ok(ctx.lang.zabbix_not_configured().into());
     }
     if args.is_empty() {
-        return Ok("Использование: /zbx_graph <itemid> <period> [name]".into());
+        return Ok(ctx.lang.zabbix_usage().into());
     }
     let item_id: u64 = args[0].parse().map_err(|_| BotError::InvalidArgument {
         input: args[0].to_string(),
@@ -372,10 +438,7 @@ async fn handle_zbx_graph(
         period_raw
     };
     if !validate_period(period) {
-        return Ok(format!(
-            "Неверный формат периода '{}'. Примеры: 1h, 30m, 7d, 2w, 86400s",
-            period_raw
-        ));
+        return Ok(ctx.lang.invalid_period(period_raw));
     }
     let name = args.get(2).copied().unwrap_or("");
     // Cap graph name length — find safe UTF-8 boundary
@@ -407,13 +470,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_empty_host() {
-        let result = handle_ping("", 5).await.unwrap();
+        let result = handle_ping("", 5, Lang::Ru).await.unwrap();
         assert!(result.contains("Использование"));
     }
 
     #[tokio::test]
     async fn test_ping_invalid_chars() {
-        let result = handle_ping("host; rm -rf /", 5).await;
+        let result = handle_ping("host; rm -rf /", 5, Lang::Ru).await;
         assert!(matches!(result.unwrap_err(), crate::error::BotError::InvalidArgument { .. }));
     }
 
@@ -423,7 +486,7 @@ mod tests {
         // The '--' separator means the host is never treated as a flag by ping.
         // We can't easily test the shell behavior in a unit test, but we verify
         // that a dash-only input does reach exec_shell (returns a non-usage error).
-        let result = handle_ping("-n", 1).await;
+        let result = handle_ping("-n", 1, Lang::Ru).await;
         // Should not return a usage message — it's not empty
         match result {
             Ok(s) => assert!(!s.contains("Использование"), "'-n' should not produce usage msg"),
@@ -458,5 +521,25 @@ mod tests {
         assert_eq!(format_mem(1024), "1 MB");
         assert_eq!(format_mem(1_048_575), "1023 MB");
         assert_eq!(format_mem(1_048_576), "1.0 GB");
+    }
+
+    #[test]
+    fn pam_kill_session_id_validation() {
+        // Valid systemd session IDs
+        let valid = ["1", "42", "c1abc", "A1B2C3", "abc123def456abc1"]; // last is exactly 16 chars
+        for id in valid {
+            assert!(
+                !id.is_empty() && id.len() <= 16 && id.chars().all(|c| c.is_ascii_alphanumeric()),
+                "should be valid: {id}"
+            );
+        }
+        // Invalid: empty, too long, contains non-alphanumeric
+        let invalid = ["", "a/b", "../etc", "a1234567890123456"]; // last is 17 chars
+        for id in invalid {
+            assert!(
+                id.is_empty() || id.len() > 16 || !id.chars().all(|c| c.is_ascii_alphanumeric()),
+                "should be invalid: {id}"
+            );
+        }
     }
 }

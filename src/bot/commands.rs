@@ -1,4 +1,5 @@
 use crate::config::CommandConfig;
+use crate::i18n::Lang;
 use crate::error::BotError;
 
 use super::security::{expand_cmd, sanitize_arg};
@@ -108,19 +109,19 @@ pub async fn run_configured_cmd(
 }
 
 /// Build help text listing all available commands.
-pub fn help_text(commands: &[CommandConfig], zabbix_configured: bool) -> String {
-    let mut lines = vec!["Доступные команды:".to_string()];
+pub fn help_text(commands: &[CommandConfig], zabbix_configured: bool, lang: Lang) -> String {
+    let mut lines = vec![lang.help_header().to_string()];
     for c in commands {
         lines.push(format!("/{} — {}", c.name, c.desc));
     }
-    lines.push("/status — состояние сервера".to_string());
-    lines.push("/top — топ процессов по CPU и памяти".to_string());
-    lines.push("/reboot — немедленная перезагрузка сервера".to_string());
-    lines.push("/speedtest — замер скорости канала".to_string());
-    lines.push("/whois <IP> — информация об IP (RDAP)".to_string());
-    lines.push("/ping <хост> — проверить доступность хоста".to_string());
+    lines.push(lang.help_status().to_string());
+    lines.push(lang.help_top().to_string());
+    lines.push(lang.help_reboot().to_string());
+    lines.push(lang.help_speedtest().to_string());
+    lines.push(lang.help_whois().to_string());
+    lines.push(lang.help_ping().to_string());
     if zabbix_configured {
-        lines.push("/zbx_graph <itemid> <period> [name] — график Zabbix".to_string());
+        lines.push(lang.help_zbx_graph().to_string());
     }
     lines.join("\n")
 }

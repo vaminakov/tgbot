@@ -1,10 +1,11 @@
 use crate::error::BotError;
+use crate::i18n::Lang;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::process::Command;
 use tracing::{info, warn};
 
-pub async fn status() -> Result<String, BotError> {
+pub async fn status(lang: Lang) -> Result<String, BotError> {
     let mut lines: Vec<String> = Vec::new();
 
     // ── Hostname + Uptime ────────────────────────────────────────────────────
@@ -23,11 +24,11 @@ pub async fn status() -> Result<String, BotError> {
         let hours = (secs % 86400) / 3600;
         let mins = (secs % 3600) / 60;
         if days > 0 {
-            format!("{}д {}ч {}м", days, hours, mins)
+            format!("{}{} {}{} {}{}", days, lang.uptime_days(), hours, lang.uptime_hours(), mins, lang.uptime_mins())
         } else if hours > 0 {
-            format!("{}ч {}м", hours, mins)
+            format!("{}{} {}{}", hours, lang.uptime_hours(), mins, lang.uptime_mins())
         } else {
-            format!("{}м", mins)
+            format!("{}{}", mins, lang.uptime_mins())
         }
     };
 
@@ -61,12 +62,12 @@ pub async fn status() -> Result<String, BotError> {
     lines.push(format!("🖥 {}  |  uptime: {}", hostname, uptime_str));
     match cpu_temp {
         Some(t) => lines.push(format!(
-            "🌡 CPU: {}°C  |  load: {}  {}  {} (1/5/15 мин)",
-            t, la1, la5, la15
+            "🌡 CPU: {}°C  |  load: {}  {}  {} {}",
+            t, la1, la5, la15, lang.load_suffix()
         )),
         None => lines.push(format!(
-            "📊 Load: {}  {}  {} (1/5/15 мин)",
-            la1, la5, la15
+            "📊 Load: {}  {}  {} {}",
+            la1, la5, la15, lang.load_suffix()
         )),
     }
 
@@ -86,8 +87,9 @@ pub async fn status() -> Result<String, BotError> {
         let avail = mem.get("MemAvailable").copied().unwrap_or(0);
         let used = total.saturating_sub(avail);
         let pct = used * 100 / total;
+        let u = lang.ram_unit();
         lines.push(format!(
-            "💾 RAM: {}М / {}М  ({}%)",
+            "💾 RAM: {}{u} / {}{u}  ({}%)",
             used / 1024,
             total / 1024,
             pct
@@ -111,12 +113,16 @@ pub async fn status() -> Result<String, BotError> {
                 let avail = cols.next().and_then(|v| v.parse::<u64>().ok());
                 if let (Some(t), Some(u), Some(a)) = (total, used, avail) {
                     let pct = (u * 100).checked_div(t).unwrap_or(0);
+                    let du = lang.disk_unit();
                     lines.push(format!(
-                        "💿 Диск: {}Г / {}Г  ({}%)  свободно: {}Г",
+                        "💿 {}: {}{du} / {}{du}  ({}%)  {}: {}{}",
+                        lang.disk_label(),
                         u / 1_073_741_824,
                         t / 1_073_741_824,
                         pct,
+                        lang.disk_free(),
                         a / 1_073_741_824,
+                        du,
                     ));
                 }
             }
@@ -161,8 +167,9 @@ pub async fn status() -> Result<String, BotError> {
                             let rx_gb = rx as f64 / 1_073_741_824.0;
                             let tx_gb = tx as f64 / 1_073_741_824.0;
                             lines.push(format!(
-                                "🌐 Трафик: ↓{:.1} ГБ  ↑{:.1} ГБ  ({})",
-                                rx_gb, tx_gb, iface
+                                "🌐 {}: ↓{:.1} {}  ↑{:.1} {}  ({})",
+                                lang.traffic_label(), rx_gb, lang.traffic_unit(),
+                                tx_gb, lang.traffic_unit(), iface
                             ));
                         }
                         break;
@@ -190,7 +197,7 @@ pub async fn status() -> Result<String, BotError> {
             else { None };
 
         let upd_line = match pm {
-            None => "📦 Менеджер пакетов не определён".to_string(),
+            None => lang.pkg_not_found().to_string(),
             Some(pm) => {
                 let pm_name = match pm {
                     Pm::Checkupdates => "checkupdates",
@@ -281,12 +288,12 @@ pub async fn status() -> Result<String, BotError> {
                 }).await;
 
                 match result {
-                    Ok(Ok(0)) => "📦 Обновлений нет".to_string(),
-                    Ok(Ok(n)) => format!("📦 Обновлений: {}", n),
-                    Ok(Err(e)) => format!("📦 Ошибка подсчёта обновлений: {}", e),
+                    Ok(Ok(0)) => lang.pkg_no_updates().to_string(),
+                    Ok(Ok(n)) => lang.pkg_updates(n),
+                    Ok(Err(e)) => lang.pkg_error(e),
                     Err(_) => {
                         warn!("status: update check timed out after 60s");
-                        "📦 Ошибка подсчёта обновлений: таймаут".to_string()
+                        lang.pkg_timeout().to_string()
                     }
                 }
             }
@@ -313,9 +320,9 @@ pub async fn status() -> Result<String, BotError> {
         };
 
         if failed.is_empty() {
-            lines.push("✅ Все службы в норме".into());
+            lines.push(lang.services_ok().to_string());
         } else {
-            lines.push(format!("⚠️ Failed служб: {}", failed.len()));
+            lines.push(lang.services_failed(failed.len()));
             for svc in &failed {
                 lines.push(format!("  • {}", svc));
             }

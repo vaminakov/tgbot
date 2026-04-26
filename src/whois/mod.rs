@@ -5,26 +5,22 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::error::BotError;
+use crate::i18n::Lang;
 
 /// Query RDAP for an IP address and return a short human-readable summary.
-pub async fn lookup(ip: &str) -> Result<String, BotError> {
+pub async fn lookup(ip: &str, lang: Lang) -> Result<String, BotError> {
     let ip = ip.trim();
     if ip.is_empty() {
-        return Ok("Использование: /whois <IP>".into());
+        return Ok(lang.whois_usage().to_string());
     }
 
     let addr: IpAddr = match ip.parse() {
         Ok(a) => a,
-        Err(_) => {
-            return Ok(format!(
-                "'{}' не является IP-адресом. Использование: /whois <IP>",
-                ip
-            ))
-        }
+        Err(_) => return Ok(lang.whois_not_ip(ip)),
     };
 
     if is_special(addr) {
-        return Ok(format!("🌐 {} — приватный/служебный адрес", addr));
+        return Ok(format!("🌐 {} — {}", addr, lang.whois_private()));
     }
 
     let client = Client::builder()
@@ -56,7 +52,7 @@ pub async fn lookup(ip: &str) -> Result<String, BotError> {
         message: format!("RDAP parse error: {}", e),
     })?;
 
-    Ok(format_rdap(addr, &data))
+    Ok(format_rdap(addr, &data, lang))
 }
 
 fn is_special(addr: IpAddr) -> bool {
@@ -73,7 +69,7 @@ fn is_special(addr: IpAddr) -> bool {
     }
 }
 
-fn format_rdap(addr: IpAddr, data: &Value) -> String {
+fn format_rdap(addr: IpAddr, data: &Value, lang: Lang) -> String {
     let mut lines = vec![format!("🌐 {}", addr)];
 
     // Network name and address range
@@ -81,36 +77,36 @@ fn format_rdap(addr: IpAddr, data: &Value) -> String {
     let start = data["startAddress"].as_str().unwrap_or("");
     let end = data["endAddress"].as_str().unwrap_or("");
     if !start.is_empty() && !end.is_empty() && start != end {
-        lines.push(format!("🔢 Сеть: {}  ({} — {})", name, start, end));
+        lines.push(format!("🔢 {}: {}  ({} — {})", lang.whois_network(), name, start, end));
     } else {
-        lines.push(format!("🔢 Сеть: {}", name));
+        lines.push(format!("🔢 {}: {}", lang.whois_network(), name));
     }
 
     // Country
     if let Some(country) = data["country"].as_str() {
-        lines.push(format!("🌍 Страна: {}", country));
+        lines.push(format!("🌍 {}: {}", lang.whois_country(), country));
     }
 
     // Organisation details (registrant entity)
     if let Some(entities) = data["entities"].as_array() {
         if let Some(org) = find_vcard_field_by_role(entities, "registrant", "fn") {
-            lines.push(format!("🏢 Организация: {}", org));
+            lines.push(format!("🏢 {}: {}", lang.whois_org(), org));
         }
         // City/region from registrant postal address (org location, not IP geolocation)
         if let Some(city) = find_vcard_adr_city_by_role(entities, "registrant") {
-            lines.push(format!("📍 Город: {}", city));
+            lines.push(format!("📍 {}: {}", lang.whois_city(), city));
         }
         // Registrant contact email (may differ from abuse address)
         if let Some(email) = find_vcard_field_by_role(entities, "registrant", "email") {
-            lines.push(format!("✉️ Контакт: {}", email));
+            lines.push(format!("✉️ {}: {}", lang.whois_contact(), email));
         }
         // Phone
         if let Some(phone) = find_vcard_phone_by_role(entities, "registrant") {
-            lines.push(format!("📞 Телефон: {}", phone));
+            lines.push(format!("📞 {}: {}", lang.whois_phone(), phone));
         }
         // Abuse contact
         if let Some(email) = find_vcard_field_by_role(entities, "abuse", "email") {
-            lines.push(format!("📧 Абьюз: {}", email));
+            lines.push(format!("📧 {}: {}", lang.whois_abuse(), email));
         }
     }
 
