@@ -117,12 +117,6 @@ pub struct TelegramConfig {
 }
 
 impl TelegramConfig {
-    /// Returns the single base URL (first entry from api_base_urls).
-    /// Kept for backward compatibility.
-    pub fn api_base_url(&self) -> String {
-        self.api_base_urls().into_iter().next().unwrap_or_default()
-    }
-
     /// Returns ordered list of full base URLs (including /bot<token>/) to try.
     /// Prefers api_addresses (list) over api_address (single), falls back to api.telegram.org.
     pub fn api_base_urls(&self) -> Vec<String> {
@@ -366,24 +360,24 @@ server_url = ""
     }
 
     #[test]
-    fn test_api_base_url_default() {
+    fn test_api_base_urls_default() {
         let cfg: Config = toml::from_str(MINIMAL).unwrap();
         assert_eq!(
-            cfg.telegram.api_base_url(),
-            "https://api.telegram.org/bot12345:TOKEN/"
+            cfg.telegram.api_base_urls(),
+            vec!["https://api.telegram.org/bot12345:TOKEN/"]
         );
     }
 
     #[test]
-    fn test_api_base_url_custom() {
+    fn test_api_base_urls_custom() {
         let toml = MINIMAL.replace(
             "token = \"12345:TOKEN\"",
             "token = \"12345:TOKEN\"\napi_address = \"vpn.example.com\"",
         );
         let cfg: Config = toml::from_str(&toml).unwrap();
         assert_eq!(
-            cfg.telegram.api_base_url(),
-            "https://vpn.example.com/bot12345:TOKEN/"
+            cfg.telegram.api_base_urls(),
+            vec!["https://vpn.example.com/bot12345:TOKEN/"]
         );
     }
 

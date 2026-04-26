@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::config::TelegramConfig;
 use crate::error::BotError;

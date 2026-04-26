@@ -1,7 +1,7 @@
 # Maintainer: Vladislav Minakov <v@minakov.pro>
 
 pkgname=tgbot
-pkgver=1.2.1
+pkgver=1.2.2
 pkgrel=1
 pkgdesc="Telegram bot for server management — written in Rust"
 arch=('x86_64')
