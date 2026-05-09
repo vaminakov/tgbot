@@ -132,3 +132,124 @@ pub fn default_keyboard() -> InlineKeyboardMarkup {
         ("reboot", "reboot"),
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg_update(chat_id: i64, text: &str, first_name: &str, username: Option<&str>) -> Update {
+        Update {
+            update_id: 1,
+            message: Some(Message {
+                chat: Chat { id: chat_id },
+                from: Some(User {
+                    first_name: first_name.to_string(),
+                    username: username.map(str::to_string),
+                }),
+                text: Some(text.to_string()),
+            }),
+            callback_query: None,
+        }
+    }
+
+    fn cb_update(chat_id: i64, data: &str, first_name: &str, cb_id: &str) -> Update {
+        Update {
+            update_id: 2,
+            message: None,
+            callback_query: Some(CallbackQuery {
+                id: cb_id.to_string(),
+                from: User { first_name: first_name.to_string(), username: None },
+                message: Some(Message {
+                    chat: Chat { id: chat_id },
+                    from: None,
+                    text: None,
+                }),
+                data: Some(data.to_string()),
+            }),
+        }
+    }
+
+    #[test]
+    fn chat_id_from_message() {
+        assert_eq!(msg_update(42, "hi", "Bob", None).chat_id(), Some(42));
+    }
+
+    #[test]
+    fn chat_id_from_callback_query() {
+        assert_eq!(cb_update(99, "status", "Alice", "cq1").chat_id(), Some(99));
+    }
+
+    #[test]
+    fn chat_id_none_when_both_absent() {
+        let u = Update { update_id: 0, message: None, callback_query: None };
+        assert_eq!(u.chat_id(), None);
+    }
+
+    #[test]
+    fn text_from_message() {
+        assert_eq!(msg_update(1, "/status", "Bob", None).text(), Some("/status"));
+    }
+
+    #[test]
+    fn text_from_callback_data() {
+        assert_eq!(cb_update(1, "speedtest", "Alice", "cq1").text(), Some("speedtest"));
+    }
+
+    #[test]
+    fn text_none_when_both_absent() {
+        let u = Update { update_id: 0, message: None, callback_query: None };
+        assert_eq!(u.text(), None);
+    }
+
+    #[test]
+    fn first_name_from_message() {
+        assert_eq!(msg_update(1, "hi", "Ivan", None).first_name(), "Ivan");
+    }
+
+    #[test]
+    fn first_name_from_callback_query() {
+        assert_eq!(cb_update(1, "x", "Anna", "cq1").first_name(), "Anna");
+    }
+
+    #[test]
+    fn first_name_fallback_when_both_absent() {
+        let u = Update { update_id: 0, message: None, callback_query: None };
+        assert_eq!(u.first_name(), "Человек");
+    }
+
+    #[test]
+    fn username_present() {
+        assert_eq!(msg_update(1, "x", "Bob", Some("bobuser")).username(), Some("bobuser"));
+    }
+
+    #[test]
+    fn username_absent() {
+        assert_eq!(msg_update(1, "x", "Bob", None).username(), None);
+    }
+
+    #[test]
+    fn callback_query_id_present() {
+        assert_eq!(cb_update(1, "x", "Alice", "cqid42").callback_query_id(), Some("cqid42"));
+    }
+
+    #[test]
+    fn callback_query_id_absent_for_message() {
+        assert_eq!(msg_update(1, "x", "Bob", None).callback_query_id(), None);
+    }
+
+    #[test]
+    fn single_row_keyboard_shape() {
+        let kb = InlineKeyboardMarkup::single_row(&[("OK", "ok"), ("No", "no")]);
+        assert_eq!(kb.inline_keyboard.len(), 1);
+        assert_eq!(kb.inline_keyboard[0].len(), 2);
+        assert_eq!(kb.inline_keyboard[0][0].text, "OK");
+        assert_eq!(kb.inline_keyboard[0][0].callback_data, "ok");
+    }
+
+    #[test]
+    fn single_row_empty_produces_one_empty_row() {
+        let kb = InlineKeyboardMarkup::single_row(&[]);
+        assert_eq!(kb.inline_keyboard.len(), 1);
+        assert!(kb.inline_keyboard[0].is_empty());
+    }
+}

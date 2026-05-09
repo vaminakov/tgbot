@@ -9,8 +9,8 @@ pub async fn status(lang: Lang) -> Result<String, BotError> {
     let mut lines: Vec<String> = Vec::new();
 
     // ── Hostname + Uptime ────────────────────────────────────────────────────
-    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .unwrap_or_else(|_| "unknown\n".into());
+    let hostname =
+        std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_else(|_| "unknown\n".into());
     let hostname = hostname.trim();
 
     let uptime_str = {
@@ -24,9 +24,23 @@ pub async fn status(lang: Lang) -> Result<String, BotError> {
         let hours = (secs % 86400) / 3600;
         let mins = (secs % 3600) / 60;
         if days > 0 {
-            format!("{}{} {}{} {}{}", days, lang.uptime_days(), hours, lang.uptime_hours(), mins, lang.uptime_mins())
+            format!(
+                "{}{} {}{} {}{}",
+                days,
+                lang.uptime_days(),
+                hours,
+                lang.uptime_hours(),
+                mins,
+                lang.uptime_mins()
+            )
         } else if hours > 0 {
-            format!("{}{} {}{}", hours, lang.uptime_hours(), mins, lang.uptime_mins())
+            format!(
+                "{}{} {}{}",
+                hours,
+                lang.uptime_hours(),
+                mins,
+                lang.uptime_mins()
+            )
         } else {
             format!("{}{}", mins, lang.uptime_mins())
         }
@@ -63,11 +77,18 @@ pub async fn status(lang: Lang) -> Result<String, BotError> {
     match cpu_temp {
         Some(t) => lines.push(format!(
             "🌡 CPU: {}°C  |  load: {}  {}  {} {}",
-            t, la1, la5, la15, lang.load_suffix()
+            t,
+            la1,
+            la5,
+            la15,
+            lang.load_suffix()
         )),
         None => lines.push(format!(
             "📊 Load: {}  {}  {} {}",
-            la1, la5, la15, lang.load_suffix()
+            la1,
+            la5,
+            la15,
+            lang.load_suffix()
         )),
     }
 
@@ -168,8 +189,12 @@ pub async fn status(lang: Lang) -> Result<String, BotError> {
                             let tx_gb = tx as f64 / 1_073_741_824.0;
                             lines.push(format!(
                                 "🌐 {}: ↓{:.1} {}  ↑{:.1} {}  ({})",
-                                lang.traffic_label(), rx_gb, lang.traffic_unit(),
-                                tx_gb, lang.traffic_unit(), iface
+                                lang.traffic_label(),
+                                rx_gb,
+                                lang.traffic_unit(),
+                                tx_gb,
+                                lang.traffic_unit(),
+                                iface
                             ));
                         }
                         break;
@@ -187,14 +212,27 @@ pub async fn status(lang: Lang) -> Result<String, BotError> {
                 .unwrap_or(false)
         }
 
-        enum Pm { Checkupdates, Pacman, Apt, Dnf, Yum }
+        enum Pm {
+            Checkupdates,
+            Pacman,
+            Apt,
+            Dnf,
+            Yum,
+        }
 
-        let pm = if cmd_exists("checkupdates")  { Some(Pm::Checkupdates) }
-            else if cmd_exists("pacman")         { Some(Pm::Pacman) }
-            else if cmd_exists("apt-get")        { Some(Pm::Apt) }
-            else if cmd_exists("dnf")            { Some(Pm::Dnf) }
-            else if cmd_exists("yum")            { Some(Pm::Yum) }
-            else { None };
+        let pm = if cmd_exists("checkupdates") {
+            Some(Pm::Checkupdates)
+        } else if cmd_exists("pacman") {
+            Some(Pm::Pacman)
+        } else if cmd_exists("apt-get") {
+            Some(Pm::Apt)
+        } else if cmd_exists("dnf") {
+            Some(Pm::Dnf)
+        } else if cmd_exists("yum") {
+            Some(Pm::Yum)
+        } else {
+            None
+        };
 
         let upd_line = match pm {
             None => lang.pkg_not_found().to_string(),

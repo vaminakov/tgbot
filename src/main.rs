@@ -1,7 +1,7 @@
 mod bot;
-mod i18n;
 mod config;
 mod error;
+mod i18n;
 mod monitor;
 mod speedtest;
 mod system;
@@ -261,7 +261,10 @@ async fn sudo_check_commands(commands: &mut [config::CommandConfig]) {
         }
 
         let ok = tokio::process::Command::new("sudo")
-            .arg("-l").arg("-U").arg("tgbot").arg("--")
+            .arg("-l")
+            .arg("-U")
+            .arg("tgbot")
+            .arg("--")
             .args(&args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

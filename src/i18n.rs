@@ -288,15 +288,24 @@ impl Lang {
     // ── system/mod.rs ─────────────────────────────────────────────────────
 
     pub fn uptime_days(self) -> &'static str {
-        match self { Self::Ru => "д", Self::En => "d" }
+        match self {
+            Self::Ru => "д",
+            Self::En => "d",
+        }
     }
 
     pub fn uptime_hours(self) -> &'static str {
-        match self { Self::Ru => "ч", Self::En => "h" }
+        match self {
+            Self::Ru => "ч",
+            Self::En => "h",
+        }
     }
 
     pub fn uptime_mins(self) -> &'static str {
-        match self { Self::Ru => "м", Self::En => "m" }
+        match self {
+            Self::Ru => "м",
+            Self::En => "m",
+        }
     }
 
     pub fn load_suffix(self) -> &'static str {
@@ -307,27 +316,45 @@ impl Lang {
     }
 
     pub fn ram_unit(self) -> &'static str {
-        match self { Self::Ru => "М", Self::En => "M" }
+        match self {
+            Self::Ru => "М",
+            Self::En => "M",
+        }
     }
 
     pub fn disk_label(self) -> &'static str {
-        match self { Self::Ru => "Диск", Self::En => "Disk" }
+        match self {
+            Self::Ru => "Диск",
+            Self::En => "Disk",
+        }
     }
 
     pub fn disk_unit(self) -> &'static str {
-        match self { Self::Ru => "Г", Self::En => "G" }
+        match self {
+            Self::Ru => "Г",
+            Self::En => "G",
+        }
     }
 
     pub fn disk_free(self) -> &'static str {
-        match self { Self::Ru => "свободно", Self::En => "free" }
+        match self {
+            Self::Ru => "свободно",
+            Self::En => "free",
+        }
     }
 
     pub fn traffic_label(self) -> &'static str {
-        match self { Self::Ru => "Трафик", Self::En => "Traffic" }
+        match self {
+            Self::Ru => "Трафик",
+            Self::En => "Traffic",
+        }
     }
 
     pub fn traffic_unit(self) -> &'static str {
-        match self { Self::Ru => "ГБ", Self::En => "GB" }
+        match self {
+            Self::Ru => "ГБ",
+            Self::En => "GB",
+        }
     }
 
     pub fn pkg_not_found(self) -> &'static str {
@@ -406,31 +433,52 @@ impl Lang {
     }
 
     pub fn whois_network(self) -> &'static str {
-        match self { Self::Ru => "Сеть", Self::En => "Network" }
+        match self {
+            Self::Ru => "Сеть",
+            Self::En => "Network",
+        }
     }
 
     pub fn whois_country(self) -> &'static str {
-        match self { Self::Ru => "Страна", Self::En => "Country" }
+        match self {
+            Self::Ru => "Страна",
+            Self::En => "Country",
+        }
     }
 
     pub fn whois_org(self) -> &'static str {
-        match self { Self::Ru => "Организация", Self::En => "Organisation" }
+        match self {
+            Self::Ru => "Организация",
+            Self::En => "Organisation",
+        }
     }
 
     pub fn whois_city(self) -> &'static str {
-        match self { Self::Ru => "Город", Self::En => "City" }
+        match self {
+            Self::Ru => "Город",
+            Self::En => "City",
+        }
     }
 
     pub fn whois_contact(self) -> &'static str {
-        match self { Self::Ru => "Контакт", Self::En => "Contact" }
+        match self {
+            Self::Ru => "Контакт",
+            Self::En => "Contact",
+        }
     }
 
     pub fn whois_phone(self) -> &'static str {
-        match self { Self::Ru => "Телефон", Self::En => "Phone" }
+        match self {
+            Self::Ru => "Телефон",
+            Self::En => "Phone",
+        }
     }
 
     pub fn whois_abuse(self) -> &'static str {
-        match self { Self::Ru => "Абьюз", Self::En => "Abuse" }
+        match self {
+            Self::Ru => "Абьюз",
+            Self::En => "Abuse",
+        }
     }
 }
 
@@ -469,7 +517,10 @@ mod tests {
     fn translations_differ_between_langs() {
         assert_ne!(Lang::Ru.ping_usage(), Lang::En.ping_usage());
         assert_ne!(Lang::Ru.help_header(), Lang::En.help_header());
-        assert_ne!(Lang::Ru.monitor_cpu_alert(90, 85), Lang::En.monitor_cpu_alert(90, 85));
+        assert_ne!(
+            Lang::Ru.monitor_cpu_alert(90, 85),
+            Lang::En.monitor_cpu_alert(90, 85)
+        );
         assert_ne!(Lang::Ru.whois_country(), Lang::En.whois_country());
         assert_ne!(Lang::Ru.uptime_days(), Lang::En.uptime_days());
         assert_ne!(Lang::Ru.services_ok(), Lang::En.services_ok());

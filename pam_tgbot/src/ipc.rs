@@ -10,7 +10,10 @@ pub const IPC_DIR: &str = "/run/tgbot/pam";
 pub fn gen_id() -> Option<String> {
     use std::io::Read;
     let mut buf = [0u8; 16];
-    std::fs::File::open("/dev/urandom").ok()?.read_exact(&mut buf).ok()?;
+    std::fs::File::open("/dev/urandom")
+        .ok()?
+        .read_exact(&mut buf)
+        .ok()?;
     Some(buf.iter().map(|b| format!("{:02x}", b)).collect())
 }
 
@@ -69,7 +72,10 @@ mod tests {
     fn test_gen_id_is_32_hex_chars() {
         let id = gen_id().expect("gen_id failed");
         assert_eq!(id.len(), 32, "ID should be 32 hex chars");
-        assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "ID should be hex");
+        assert!(
+            id.chars().all(|c| c.is_ascii_hexdigit()),
+            "ID should be hex"
+        );
     }
 
     #[test]
@@ -81,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_poll_approved() {
-        let dir  = tempfile::tempdir().expect("tempdir");
+        let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ipc_approve");
         fs::write(&path, b"pending").unwrap();
 
@@ -96,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_poll_denied() {
-        let dir  = tempfile::tempdir().expect("tempdir");
+        let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ipc_deny");
         fs::write(&path, b"pending").unwrap();
 
@@ -111,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_poll_timeout() {
-        let dir  = tempfile::tempdir().expect("tempdir");
+        let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ipc_timeout");
         fs::write(&path, b"pending").unwrap();
 
@@ -121,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_poll_file_gone_treated_as_denied() {
-        let dir  = tempfile::tempdir().expect("tempdir");
+        let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("ipc_gone");
         fs::write(&path, b"pending").unwrap();
 

@@ -1,6 +1,6 @@
 use crate::config::CommandConfig;
-use crate::i18n::Lang;
 use crate::error::BotError;
+use crate::i18n::Lang;
 
 use super::security::{expand_cmd, sanitize_arg};
 
@@ -167,5 +167,79 @@ mod tests {
     fn test_parse_slash_prefix() {
         let (cmd, _) = parse_input("/status");
         assert_eq!(cmd, "status");
+    }
+
+    #[test]
+    fn test_parse_botname_suffix() {
+        let (cmd, args) = parse_input("/status@mybotname");
+        assert_eq!(cmd, "status");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_botname_suffix_with_args() {
+        let (cmd, args) = parse_input("/unban@mybot 1.2.3.4");
+        assert_eq!(cmd, "unban");
+        assert_eq!(args, vec!["1.2.3.4"]);
+    }
+
+    #[tokio::test]
+    async fn test_exec_shell_nonzero_exit_appends_code() {
+        let result = exec_shell("exit 5", 5).await.unwrap();
+        assert!(result.contains("[exit: 5]"));
+    }
+
+    #[tokio::test]
+    async fn test_run_configured_cmd_unavailable() {
+        use crate::config::CommandConfig;
+        let cfg = CommandConfig {
+            name: "broken".into(),
+            cmd: "echo hi".into(),
+            desc: "d".into(),
+            sudo_check: false,
+            unavailable: true,
+        };
+        let err = run_configured_cmd(&cfg, &[], 5).await.unwrap_err();
+        assert!(matches!(err, crate::error::BotError::CommandUnavailable { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_run_configured_cmd_arg1_valid() {
+        use crate::config::CommandConfig;
+        let cfg = CommandConfig {
+            name: "test".into(),
+            cmd: "echo {arg1}".into(),
+            desc: "d".into(),
+            sudo_check: false,
+            unavailable: false,
+        };
+        let result = run_configured_cmd(&cfg, &["hello"], 5).await.unwrap();
+        assert!(result.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_run_configured_cmd_arg1_rejects_shell_injection() {
+        use crate::config::CommandConfig;
+        let cfg = CommandConfig {
+            name: "test".into(),
+            cmd: "echo {arg1}".into(),
+            desc: "d".into(),
+            sudo_check: false,
+            unavailable: false,
+        };
+        let err = run_configured_cmd(&cfg, &["; evil"], 5).await.unwrap_err();
+        assert!(matches!(err, crate::error::BotError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn test_help_text_excludes_zbx_without_zabbix() {
+        let text = help_text(&[], false, crate::i18n::Lang::En);
+        assert!(!text.contains("zbx_graph"));
+    }
+
+    #[test]
+    fn test_help_text_includes_zbx_with_zabbix() {
+        let text = help_text(&[], true, crate::i18n::Lang::En);
+        assert!(text.contains("zbx_graph"));
     }
 }

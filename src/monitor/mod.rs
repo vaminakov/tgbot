@@ -33,7 +33,11 @@ fn should_alert(state: &AlertState, over: bool, remind_secs: u64) -> Option<Aler
             .last_alert
             .map(|t| t.elapsed().as_secs() >= remind_secs)
             .unwrap_or(true);
-        if due { Some(AlertAction::Alert) } else { None }
+        if due {
+            Some(AlertAction::Alert)
+        } else {
+            None
+        }
     } else if state.in_alert {
         Some(AlertAction::Recover)
     } else {
@@ -49,8 +53,7 @@ async fn read_cpu_snapshot() -> Option<CpuSnapshot> {
         .skip(1)
         .filter_map(|s| s.parse().ok())
         .collect();
-    let idle = nums.get(3).copied().unwrap_or(0)
-        + nums.get(4).copied().unwrap_or(0); // idle + iowait
+    let idle = nums.get(3).copied().unwrap_or(0) + nums.get(4).copied().unwrap_or(0); // idle + iowait
     let total: u64 = nums.iter().sum();
     Some(CpuSnapshot { total, idle })
 }
@@ -66,7 +69,9 @@ async fn read_ram_percent() -> Option<u64> {
             avail = val.split_whitespace().next()?.parse().ok()?;
         }
     }
-    if total == 0 { return None; }
+    if total == 0 {
+        return None;
+    }
     let used = total.saturating_sub(avail);
     Some(used * 100 / total)
 }
@@ -89,7 +94,9 @@ async fn read_disk_percent() -> Option<u64> {
     let used: u64 = cols.next()?.parse().ok()?;
     let avail: u64 = cols.next()?.parse().ok()?;
     let denom = used + avail;
-    if denom == 0 { return None; }
+    if denom == 0 {
+        return None;
+    }
     Some(used * 100 / denom)
 }
 
@@ -141,14 +148,17 @@ pub async fn run(ctx: Arc<BotContext>) {
                 if let Some(pct) = ((d_total - d_idle) * 100).checked_div(d_total) {
                     match should_alert(&cpu_st, pct >= cfg.cpu_warn as u64, remind_secs) {
                         Some(AlertAction::Alert) => {
-                            fire(&ctx, super_id,
-                                &ctx.lang.monitor_cpu_alert(pct as u8, cfg.cpu_warn)).await;
+                            fire(
+                                &ctx,
+                                super_id,
+                                &ctx.lang.monitor_cpu_alert(pct as u8, cfg.cpu_warn),
+                            )
+                            .await;
                             cpu_st.in_alert = true;
                             cpu_st.last_alert = Some(Instant::now());
                         }
                         Some(AlertAction::Recover) => {
-                            fire(&ctx, super_id,
-                                &ctx.lang.monitor_cpu_recover(pct as u8)).await;
+                            fire(&ctx, super_id, &ctx.lang.monitor_cpu_recover(pct as u8)).await;
                             cpu_st.in_alert = false;
                             cpu_st.last_alert = None;
                         }
@@ -163,14 +173,17 @@ pub async fn run(ctx: Arc<BotContext>) {
         if let Some(pct) = read_ram_percent().await {
             match should_alert(&ram_st, pct >= cfg.ram_warn as u64, remind_secs) {
                 Some(AlertAction::Alert) => {
-                    fire(&ctx, super_id,
-                        &ctx.lang.monitor_ram_alert(pct as u8, cfg.ram_warn)).await;
+                    fire(
+                        &ctx,
+                        super_id,
+                        &ctx.lang.monitor_ram_alert(pct as u8, cfg.ram_warn),
+                    )
+                    .await;
                     ram_st.in_alert = true;
                     ram_st.last_alert = Some(Instant::now());
                 }
                 Some(AlertAction::Recover) => {
-                    fire(&ctx, super_id,
-                        &ctx.lang.monitor_ram_recover(pct as u8)).await;
+                    fire(&ctx, super_id, &ctx.lang.monitor_ram_recover(pct as u8)).await;
                     ram_st.in_alert = false;
                     ram_st.last_alert = None;
                 }
@@ -182,14 +195,17 @@ pub async fn run(ctx: Arc<BotContext>) {
         if let Some(pct) = read_disk_percent().await {
             match should_alert(&disk_st, pct >= cfg.disk_warn as u64, remind_secs) {
                 Some(AlertAction::Alert) => {
-                    fire(&ctx, super_id,
-                        &ctx.lang.monitor_disk_alert(pct as u8, cfg.disk_warn)).await;
+                    fire(
+                        &ctx,
+                        super_id,
+                        &ctx.lang.monitor_disk_alert(pct as u8, cfg.disk_warn),
+                    )
+                    .await;
                     disk_st.in_alert = true;
                     disk_st.last_alert = Some(Instant::now());
                 }
                 Some(AlertAction::Recover) => {
-                    fire(&ctx, super_id,
-                        &ctx.lang.monitor_disk_recover(pct as u8)).await;
+                    fire(&ctx, super_id, &ctx.lang.monitor_disk_recover(pct as u8)).await;
                     disk_st.in_alert = false;
                     disk_st.last_alert = None;
                 }
@@ -230,7 +246,10 @@ mod tests {
             in_alert: true,
             last_alert: Some(Instant::now()),
         };
-        assert_eq!(should_alert(&state, false, 1800), Some(AlertAction::Recover));
+        assert_eq!(
+            should_alert(&state, false, 1800),
+            Some(AlertAction::Recover)
+        );
     }
 
     #[test]

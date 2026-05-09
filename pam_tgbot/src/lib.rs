@@ -13,15 +13,15 @@ pub enum PamHandle {}
 pub type PamHandleT = *mut PamHandle;
 
 // ── PAM item types ────────────────────────────────────────────────────────────
-const PAM_USER:  c_int = 2;
-const PAM_TTY:   c_int = 3;
+const PAM_USER: c_int = 2;
+const PAM_TTY: c_int = 3;
 const PAM_RHOST: c_int = 4;
-const PAM_CONV:  c_int = 5;
+const PAM_CONV: c_int = 5;
 
 // ── PAM return codes ──────────────────────────────────────────────────────────
-const PAM_SUCCESS:  c_int = 0;
+const PAM_SUCCESS: c_int = 0;
 const PAM_AUTH_ERR: c_int = 7;
-const PAM_IGNORE:   c_int = 25;
+const PAM_IGNORE: c_int = 25;
 
 // ── Conversation message styles ───────────────────────────────────────────────
 const PAM_TEXT_INFO: c_int = 4;
@@ -30,12 +30,12 @@ const PAM_ERROR_MSG: c_int = 3;
 #[repr(C)]
 struct PamMessage {
     msg_style: c_int,
-    msg:       *const c_char,
+    msg: *const c_char,
 }
 
 #[repr(C)]
 struct PamResponse {
-    resp:         *mut c_char,
+    resp: *mut c_char,
     resp_retcode: c_int,
 }
 
@@ -48,7 +48,7 @@ type PamConvFn = unsafe extern "C" fn(
 
 #[repr(C)]
 struct PamConv {
-    conv:        PamConvFn,
+    conv: PamConvFn,
     appdata_ptr: *mut c_void,
 }
 
@@ -86,7 +86,9 @@ fn get_user(pamh: PamHandleT) -> Option<String> {
 }
 
 fn get_env_str(pamh: PamHandleT, name: &str) -> Option<String> {
-    let Ok(cname) = CString::new(name) else { return None };
+    let Ok(cname) = CString::new(name) else {
+        return None;
+    };
     let ptr = unsafe { pam_getenv(pamh, cname.as_ptr()) };
     if ptr.is_null() {
         return None;
@@ -103,7 +105,10 @@ fn conv_info(pamh: PamHandleT, text: &str, style: c_int) {
         }
         let conv = &*(item as *const PamConv);
         let Ok(cstr) = CString::new(text) else { return };
-        let msg = PamMessage { msg_style: style, msg: cstr.as_ptr() };
+        let msg = PamMessage {
+            msg_style: style,
+            msg: cstr.as_ptr(),
+        };
         let msg_ptr: *const PamMessage = &msg;
         let msgs = [msg_ptr];
         let mut resp: *mut PamResponse = ptr::null_mut();
@@ -115,9 +120,7 @@ fn conv_info(pamh: PamHandleT, text: &str, style: c_int) {
             }
             libc::free(resp as *mut c_void);
         }
-        if rc != PAM_SUCCESS {
-            return;
-        }
+        if rc != PAM_SUCCESS {}
     }
 }
 
@@ -130,8 +133,12 @@ fn lang_is_ru(cfg: &config::LoadedCfg) -> bool {
             for var in ["LC_ALL", "LANG"] {
                 if let Ok(val) = std::env::var(var) {
                     let lo = val.to_ascii_lowercase();
-                    if lo.starts_with("ru") { return true; }
-                    if lo.starts_with("en") { return false; }
+                    if lo.starts_with("ru") {
+                        return true;
+                    }
+                    if lo.starts_with("en") {
+                        return false;
+                    }
                 }
             }
             false // default to English
@@ -144,11 +151,11 @@ fn slog(priority: libc::c_int, msg: &str) {
     let Ok(cmsg) = CString::new(msg) else { return };
     unsafe {
         libc::openlog(
-            b"pam_tgbot\0".as_ptr() as *const c_char,
+            c"pam_tgbot".as_ptr(),
             libc::LOG_NDELAY | libc::LOG_PID,
             libc::LOG_AUTH,
         );
-        libc::syslog(priority, b"%s\0".as_ptr() as *const c_char, cmsg.as_ptr());
+        libc::syslog(priority, c"%s".as_ptr(), cmsg.as_ptr());
         libc::closelog();
     }
 }
@@ -157,40 +164,63 @@ fn slog(priority: libc::c_int, msg: &str) {
 
 #[no_mangle]
 pub extern "C" fn pam_sm_authenticate(
-    pamh:   PamHandleT,
+    pamh: PamHandleT,
     _flags: c_uint,
-    _argc:  c_int,
-    _argv:  *const *const c_char,
+    _argc: c_int,
+    _argv: *const *const c_char,
 ) -> c_int {
     let Some(cfg) = config::load(config::CONFIG_PATH) else {
         return PAM_IGNORE; // no config — not our problem
     };
     if !cfg.pam.two_factor_enabled {
-        slog(libc::LOG_INFO,
-             "two_factor_enabled=false, skipping 2FA (set it to true in [pam] config)");
+        slog(
+            libc::LOG_INFO,
+            "two_factor_enabled=false, skipping 2FA (set it to true in [pam] config)",
+        );
         return PAM_IGNORE;
     }
 
     let ru = lang_is_ru(&cfg);
 
-    let user  = get_user(pamh).unwrap_or_else(|| "unknown".to_string());
+    let user = get_user(pamh).unwrap_or_else(|| "unknown".to_string());
     let rhost = get_item_str(pamh, PAM_RHOST).unwrap_or_else(|| "unknown".to_string());
+
+    // Skip 2FA for excluded users (e.g. service accounts like gitlab).
+    if is_excluded(&user, &cfg.pam.notify_exclude_users) {
+        slog(
+            libc::LOG_INFO,
+            &format!("2FA skipped for excluded user {}", user),
+        );
+        return PAM_IGNORE;
+    }
 
     // Rate limiting: reject if a 2FA request was made too recently for this user.
     if cfg.pam.two_factor_rate_limit_secs > 0 {
-        let safe_user: String = user.chars()
-            .map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' })
+        let safe_user: String = user
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let rate_file = format!("{}/rl_{}", ipc::IPC_DIR, safe_user);
         if let Ok(meta) = std::fs::metadata(&rate_file) {
             if let Ok(modified) = meta.modified() {
                 let elapsed = modified.elapsed().unwrap_or(std::time::Duration::MAX);
                 if elapsed.as_secs() < cfg.pam.two_factor_rate_limit_secs {
-                    slog(libc::LOG_WARNING, &format!(
-                        "2FA rate limit for user {} — {}s remaining",
-                        user,
-                        cfg.pam.two_factor_rate_limit_secs.saturating_sub(elapsed.as_secs())
-                    ));
+                    slog(
+                        libc::LOG_WARNING,
+                        &format!(
+                            "2FA rate limit for user {} — {}s remaining",
+                            user,
+                            cfg.pam
+                                .two_factor_rate_limit_secs
+                                .saturating_sub(elapsed.as_secs())
+                        ),
+                    );
                     return PAM_AUTH_ERR;
                 }
             }
@@ -211,15 +241,35 @@ pub extern "C" fn pam_sm_authenticate(
     };
 
     let msg = if ru {
-        format!("🔐 Запрос 2FA: вход пользователя {} с {}\n\nАвторизовать?", user, rhost)
+        format!(
+            "🔐 Запрос 2FA: вход пользователя {} с {}\n\nАвторизовать?",
+            user, rhost
+        )
     } else {
-        format!("🔐 2FA request: login by {} from {}\n\nAuthorise?", user, rhost)
+        format!(
+            "🔐 2FA request: login by {} from {}\n\nAuthorise?",
+            user, rhost
+        )
     };
     let approve_data = format!("pam_approve:{}", id);
-    let deny_data    = format!("pam_deny:{}", id);
+    let deny_data = format!("pam_deny:{}", id);
     let buttons = [
-        (if ru { "✅ Одобрить"   } else { "✅ Approve" }, approve_data.as_str()),
-        (if ru { "❌ Отклонить" } else { "❌ Deny"    }, deny_data.as_str()),
+        (
+            if ru {
+                "✅ Одобрить"
+            } else {
+                "✅ Approve"
+            },
+            approve_data.as_str(),
+        ),
+        (
+            if ru {
+                "❌ Отклонить"
+            } else {
+                "❌ Deny"
+            },
+            deny_data.as_str(),
+        ),
     ];
 
     if telegram::send_required(
@@ -228,13 +278,21 @@ pub extern "C" fn pam_sm_authenticate(
         &msg,
         &buttons,
         &cfg.tg.proxy,
-    ).is_err() {
+    )
+    .is_err()
+    {
         let _ = std::fs::remove_file(&ipc_path);
-        slog(libc::LOG_ERR, "failed to send 2FA request to Telegram — check bot token and network");
+        slog(
+            libc::LOG_ERR,
+            "failed to send 2FA request to Telegram — check bot token and network",
+        );
         conv_info(
             pamh,
-            if ru { "Ошибка: не удалось отправить запрос 2FA." }
-            else  { "Error: failed to send 2FA request." },
+            if ru {
+                "Ошибка: не удалось отправить запрос 2FA."
+            } else {
+                "Error: failed to send 2FA request."
+            },
             PAM_ERROR_MSG,
         );
         return PAM_AUTH_ERR;
@@ -242,30 +300,50 @@ pub extern "C" fn pam_sm_authenticate(
 
     conv_info(
         pamh,
-        if ru { "Ожидание подтверждения в Telegram..." }
-        else  { "Waiting for Telegram confirmation..." },
+        if ru {
+            "Ожидание подтверждения в Telegram..."
+        } else {
+            "Waiting for Telegram confirmation..."
+        },
         PAM_TEXT_INFO,
     );
 
     match ipc::poll_response(&ipc_path, cfg.pam.two_factor_timeout_secs) {
-        Some(true)  => {
-            slog(libc::LOG_INFO, &format!("2FA approved for user {user} from {rhost}"));
+        Some(true) => {
+            slog(
+                libc::LOG_INFO,
+                &format!("2FA approved for user {user} from {rhost}"),
+            );
             PAM_SUCCESS
         }
         Some(false) => {
-            slog(libc::LOG_WARNING, &format!("2FA denied for user {user} from {rhost}"));
+            slog(
+                libc::LOG_WARNING,
+                &format!("2FA denied for user {user} from {rhost}"),
+            );
             conv_info(
                 pamh,
-                if ru { "Доступ отклонён." } else { "Access denied." },
+                if ru {
+                    "Доступ отклонён."
+                } else {
+                    "Access denied."
+                },
                 PAM_ERROR_MSG,
             );
             PAM_AUTH_ERR
         }
         None => {
-            slog(libc::LOG_WARNING, &format!("2FA timed out for user {user} from {rhost}"));
+            slog(
+                libc::LOG_WARNING,
+                &format!("2FA timed out for user {user} from {rhost}"),
+            );
             conv_info(
                 pamh,
-                if ru { "Таймаут подтверждения 2FA." } else { "2FA confirmation timed out." },
+                if ru {
+                    "Таймаут подтверждения 2FA."
+                } else {
+                    "2FA confirmation timed out."
+                },
                 PAM_ERROR_MSG,
             );
             PAM_AUTH_ERR
@@ -275,20 +353,20 @@ pub extern "C" fn pam_sm_authenticate(
 
 #[no_mangle]
 pub extern "C" fn pam_sm_setcred(
-    _pamh:  PamHandleT,
+    _pamh: PamHandleT,
     _flags: c_uint,
-    _argc:  c_int,
-    _argv:  *const *const c_char,
+    _argc: c_int,
+    _argv: *const *const c_char,
 ) -> c_int {
     PAM_IGNORE
 }
 
 #[no_mangle]
 pub extern "C" fn pam_sm_open_session(
-    pamh:   PamHandleT,
+    pamh: PamHandleT,
     _flags: c_uint,
-    _argc:  c_int,
-    _argv:  *const *const c_char,
+    _argc: c_int,
+    _argv: *const *const c_char,
 ) -> c_int {
     let Some(cfg) = config::load(config::CONFIG_PATH) else {
         return PAM_SUCCESS; // no config — proceed silently
@@ -299,8 +377,14 @@ pub extern "C" fn pam_sm_open_session(
 
     let ru = lang_is_ru(&cfg);
 
-    let user  = get_user(pamh).unwrap_or_else(|| "unknown".to_string());
+    let user = get_user(pamh).unwrap_or_else(|| "unknown".to_string());
     let rhost = get_item_str(pamh, PAM_RHOST).unwrap_or_else(|| "unknown".to_string());
+
+    // Skip notification for excluded users (e.g. service accounts like gitlab).
+    if is_excluded(&user, &cfg.pam.notify_exclude_users) {
+        return PAM_SUCCESS;
+    }
+
     let session_id = get_env_str(pamh, "XDG_SESSION_ID");
 
     if session_id.is_none() {
@@ -320,48 +404,150 @@ pub extern "C" fn pam_sm_open_session(
     // block_ip_cmd callback_data enables shell injection via {args}-style commands.
     let rhost_safe = !rhost.is_empty()
         && rhost != "unknown"
-        && rhost.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c));
+        && rhost
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c));
     let block_data: Option<String> = if !cfg.pam.block_ip_cmd.is_empty() && rhost_safe {
         Some(format!("{} {}", cfg.pam.block_ip_cmd, rhost))
     } else {
         None
     };
+    // IpAddr::parse is stricter than rhost_safe charset, so no injection is possible here.
+    // block_data also checks rhost_safe because its cmd goes through sh -c with {args}.
+    let whois_data = make_whois_data(&rhost);
 
     let mut buttons: Vec<(&str, &str)> = Vec::new();
     if let Some(ref kd) = kill_data {
-        buttons.push((if ru { "🚫 Завершить сессию" } else { "🚫 Terminate session" }, kd.as_str()));
+        buttons.push((
+            if ru {
+                "🚫 Завершить сессию"
+            } else {
+                "🚫 Terminate session"
+            },
+            kd.as_str(),
+        ));
     }
     if let Some(ref bd) = block_data {
-        buttons.push((if ru { "🛡 Блокировать IP" } else { "🛡 Block IP" }, bd.as_str()));
+        buttons.push((
+            if ru {
+                "🛡 Блокировать IP"
+            } else {
+                "🛡 Block IP"
+            },
+            bd.as_str(),
+        ));
+    }
+    if let Some(ref wd) = whois_data {
+        buttons.push(("🔍 Whois IP", wd.as_str()));
     }
 
-    telegram::send(
-        &cfg.tg.api_base(),
-        cfg.super_admin_id,
-        &msg,
-        &buttons,
-        &cfg.tg.proxy,
-    );
+    for &admin_id in &cfg.notify_admin_ids {
+        telegram::send(
+            &cfg.tg.api_base(),
+            admin_id,
+            &msg,
+            &buttons,
+            &cfg.tg.proxy,
+        );
+    }
 
     PAM_SUCCESS
 }
 
+fn make_whois_data(rhost: &str) -> Option<String> {
+    if rhost.parse::<std::net::IpAddr>().is_ok() {
+        Some(format!("whois {}", rhost))
+    } else {
+        None
+    }
+}
+
+fn is_excluded(user: &str, exclude_list: &[String]) -> bool {
+    user != "unknown" && exclude_list.iter().any(|u| u.as_str() == user)
+}
+
 #[no_mangle]
 pub extern "C" fn pam_sm_close_session(
-    _pamh:  PamHandleT,
+    _pamh: PamHandleT,
     _flags: c_uint,
-    _argc:  c_int,
-    _argv:  *const *const c_char,
+    _argc: c_int,
+    _argv: *const *const c_char,
 ) -> c_int {
     PAM_IGNORE
 }
 
 #[no_mangle]
 pub extern "C" fn pam_sm_acct_mgmt(
-    _pamh:  PamHandleT,
+    _pamh: PamHandleT,
     _flags: c_uint,
-    _argc:  c_int,
-    _argv:  *const *const c_char,
+    _argc: c_int,
+    _argv: *const *const c_char,
 ) -> c_int {
     PAM_IGNORE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── make_whois_data ───────────────────────────────────────────────────────
+
+    #[test]
+    fn whois_data_ipv4() {
+        assert_eq!(
+            make_whois_data("1.2.3.4"),
+            Some("whois 1.2.3.4".to_string())
+        );
+    }
+
+    #[test]
+    fn whois_data_ipv6() {
+        assert_eq!(
+            make_whois_data("2001:db8::1"),
+            Some("whois 2001:db8::1".to_string())
+        );
+    }
+
+    #[test]
+    fn whois_data_hostname_is_none() {
+        assert_eq!(make_whois_data("example.com"), None);
+    }
+
+    #[test]
+    fn whois_data_unknown_is_none() {
+        assert_eq!(make_whois_data("unknown"), None);
+    }
+
+    #[test]
+    fn whois_data_empty_is_none() {
+        assert_eq!(make_whois_data(""), None);
+    }
+
+    // ── is_excluded ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn excluded_user_is_skipped() {
+        let list = vec!["gitlab".to_string(), "ci".to_string()];
+        assert!(is_excluded("gitlab", &list));
+        assert!(is_excluded("ci", &list));
+    }
+
+    #[test]
+    fn non_excluded_user_is_not_skipped() {
+        let list = vec!["gitlab".to_string()];
+        assert!(!is_excluded("alice", &list));
+    }
+
+    #[test]
+    fn unknown_user_never_excluded_even_if_in_list() {
+        // Prevents silent bypass when PAM_USER is unresolvable.
+        let list = vec!["unknown".to_string(), "gitlab".to_string()];
+        assert!(!is_excluded("unknown", &list));
+    }
+
+    #[test]
+    fn empty_exclude_list_excludes_nobody() {
+        assert!(!is_excluded("gitlab", &[]));
+        assert!(!is_excluded("unknown", &[]));
+    }
 }

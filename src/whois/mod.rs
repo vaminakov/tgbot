@@ -50,14 +50,21 @@ pub async fn lookup(ip: &str, lang: Lang) -> Result<String, BotError> {
             .send()
             .await
         {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<Value>().await {
-                    Ok(data) => { rdap_data = Some(data); break; }
-                    Err(e) => { rdap_err = e.to_string(); }
+            Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
+                Ok(data) => {
+                    rdap_data = Some(data);
+                    break;
                 }
+                Err(e) => {
+                    rdap_err = e.to_string();
+                }
+            },
+            Ok(resp) => {
+                rdap_err = format!("HTTP {}", resp.status());
             }
-            Ok(resp) => { rdap_err = format!("HTTP {}", resp.status()); }
-            Err(e) => { rdap_err = e.to_string(); }
+            Err(e) => {
+                rdap_err = e.to_string();
+            }
         }
     }
 
@@ -88,7 +95,13 @@ fn format_rdap(addr: IpAddr, data: &Value, lang: Lang) -> String {
     let start = data["startAddress"].as_str().unwrap_or("");
     let end = data["endAddress"].as_str().unwrap_or("");
     if !start.is_empty() && !end.is_empty() && start != end {
-        lines.push(format!("🔢 {}: {}  ({} — {})", lang.whois_network(), name, start, end));
+        lines.push(format!(
+            "🔢 {}: {}  ({} — {})",
+            lang.whois_network(),
+            name,
+            start,
+            end
+        ));
     } else {
         lines.push(format!("🔢 {}: {}", lang.whois_network(), name));
     }
@@ -231,4 +244,168 @@ fn get_vcard_field(entity: &Value, field_type: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── is_special ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn special_private_ipv4() {
+        assert!(is_special("10.0.0.1".parse().unwrap()));
+        assert!(is_special("192.168.1.1".parse().unwrap()));
+        assert!(is_special("172.16.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn special_loopback_ipv4() {
+        assert!(is_special("127.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn special_link_local_ipv4() {
+        assert!(is_special("169.254.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn special_broadcast_ipv4() {
+        assert!(is_special("255.255.255.255".parse().unwrap()));
+    }
+
+    #[test]
+    fn public_ipv4_not_special() {
+        assert!(!is_special("8.8.8.8".parse().unwrap()));
+        assert!(!is_special("1.1.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn special_ipv6_loopback() {
+        assert!(is_special("::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn public_ipv6_not_special() {
+        assert!(!is_special("2001:db8::1".parse().unwrap()));
+    }
+
+    // ── format_rdap ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn format_rdap_includes_ip_name_country() {
+        let addr: IpAddr = "8.8.8.8".parse().unwrap();
+        let data = json!({
+            "name": "GOGL",
+            "startAddress": "8.8.8.0",
+            "endAddress": "8.8.8.255",
+            "country": "US"
+        });
+        let result = format_rdap(addr, &data, crate::i18n::Lang::En);
+        assert!(result.contains("8.8.8.8"));
+        assert!(result.contains("GOGL"));
+        assert!(result.contains("US"));
+        assert!(result.contains("8.8.8.0"));
+        assert!(result.contains("8.8.8.255"));
+    }
+
+    #[test]
+    fn format_rdap_start_equals_end_no_range_shown() {
+        let addr: IpAddr = "8.8.8.8".parse().unwrap();
+        let data = json!({ "name": "X", "startAddress": "8.8.8.8", "endAddress": "8.8.8.8" });
+        let result = format_rdap(addr, &data, crate::i18n::Lang::En);
+        assert!(!result.contains(" — "), "should not display range when start == end");
+    }
+
+    #[test]
+    fn format_rdap_with_registrant_org() {
+        let addr: IpAddr = "1.1.1.1".parse().unwrap();
+        let data = json!({
+            "name": "APNIC",
+            "entities": [{
+                "roles": ["registrant"],
+                "vcardArray": ["vcard", [
+                    ["fn", {}, "text", "Cloudflare Inc"]
+                ]]
+            }]
+        });
+        let result = format_rdap(addr, &data, crate::i18n::Lang::En);
+        assert!(result.contains("Cloudflare Inc"));
+    }
+
+    // ── get_vcard_adr_city ───────────────────────────────────────────────────
+
+    #[test]
+    fn vcard_adr_city_and_region() {
+        let entity = json!({
+            "vcardArray": ["vcard", [
+                ["adr", {}, "text", ["", "", "", "", "Amsterdam", "NH", "1000", "NL"]]
+            ]]
+        });
+        assert_eq!(get_vcard_adr_city(&entity).unwrap(), "Amsterdam, NH");
+    }
+
+    #[test]
+    fn vcard_adr_city_only() {
+        let entity = json!({
+            "vcardArray": ["vcard", [
+                ["adr", {}, "text", ["", "", "", "", "Berlin", "", "", "DE"]]
+            ]]
+        });
+        assert_eq!(get_vcard_adr_city(&entity).unwrap(), "Berlin");
+    }
+
+    #[test]
+    fn vcard_adr_region_only() {
+        let entity = json!({
+            "vcardArray": ["vcard", [
+                ["adr", {}, "text", ["", "", "", "", "", "Bavaria", "", "DE"]]
+            ]]
+        });
+        assert_eq!(get_vcard_adr_city(&entity).unwrap(), "Bavaria");
+    }
+
+    #[test]
+    fn vcard_adr_both_empty_is_none() {
+        let entity = json!({
+            "vcardArray": ["vcard", [
+                ["adr", {}, "text", ["", "", "", "", "", "", "", ""]]
+            ]]
+        });
+        assert!(get_vcard_adr_city(&entity).is_none());
+    }
+
+    // ── find_vcard_field_by_role (nested recursion) ──────────────────────────
+
+    #[test]
+    fn find_vcard_field_in_nested_entity() {
+        let entities = json!([{
+            "roles": ["registrant"],
+            "entities": [{
+                "roles": ["abuse"],
+                "vcardArray": ["vcard", [
+                    ["email", {}, "text", "abuse@example.com"]
+                ]]
+            }]
+        }]);
+        let result =
+            find_vcard_field_by_role(entities.as_array().unwrap(), "abuse", "email");
+        assert_eq!(result.unwrap(), "abuse@example.com");
+    }
+
+    // ── find_vcard_phone_by_role ─────────────────────────────────────────────
+
+    #[test]
+    fn phone_tel_uri_prefix_stripped() {
+        let entities = json!([{
+            "roles": ["registrant"],
+            "vcardArray": ["vcard", [
+                ["tel", {}, "uri", "tel:+1-800-555-0100"]
+            ]]
+        }]);
+        let result =
+            find_vcard_phone_by_role(entities.as_array().unwrap(), "registrant");
+        assert_eq!(result.unwrap(), "+1-800-555-0100");
+    }
 }

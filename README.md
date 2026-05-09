@@ -251,7 +251,7 @@ sudo make update   # build → install → restart
 
 | PAM type | Behaviour |
 |---|---|
-| `session optional pam_tgbot.so` | Sends a login notification with **[Terminate session]** and **[Block IP]** buttons |
+| `session optional pam_tgbot.so` | Sends a login notification with **[Terminate session]**, **[Block IP]**, and **[Whois IP]** buttons |
 | `auth required pam_tgbot.so` | Blocks login; super-admin receives ✅/❌ buttons; login proceeds only on approval |
 
 ### Setup
@@ -265,6 +265,7 @@ notify_login            = true
 two_factor_enabled      = false    # set true for full 2FA
 two_factor_timeout_secs = 60
 block_ip_cmd            = "ban-cs" # name of your block command in [[commands]]
+notify_exclude_users    = ["gitlab"]  # service accounts — skip notifications and 2FA entirely
 ```
 
 **2. Edit `/etc/pam.d/sshd`** (start with notifications only):
@@ -293,6 +294,8 @@ sudo chmod 440 /etc/sudoers.d/tgbot-pam
 
 - The bot (`tgbot.service`) must be running. If it is down, **2FA is skipped** (fail-open) and notifications are not sent.
 - The **Block IP** button sends `<block_ip_cmd> <ip>` as a Telegram callback, which the bot routes to your existing configured command.
+- The **Whois IP** button triggers a live RDAP lookup for the source IP and replies with country, org, and registrant info. Shown only when `PAM_RHOST` is a valid IP address.
+- `notify_exclude_users` suppresses both login notifications and 2FA for listed users (e.g. service accounts, CI runners). Set to `[]` to disable exclusions. The fallback username `"unknown"` is never excluded regardless of config.
 - Do not enable `two_factor_enabled = true` on SSH without a tested fallback login path.
 
 ## Project structure

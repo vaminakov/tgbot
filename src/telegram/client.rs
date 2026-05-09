@@ -177,7 +177,6 @@ impl TelegramClient {
         Ok(())
     }
 
-
     pub async fn answer_callback_query(&self, callback_query_id: &str) -> Result<(), BotError> {
         #[derive(Serialize)]
         struct Body<'a> {
@@ -235,7 +234,10 @@ impl TelegramClient {
         }
         self.post_json::<serde_json::Value, _>(
             "setWebhook",
-            &Body { url, drop_pending_updates },
+            &Body {
+                url,
+                drop_pending_updates,
+            },
         )
         .await?;
         Ok(())
@@ -246,8 +248,13 @@ impl TelegramClient {
         struct Body {
             drop_pending_updates: bool,
         }
-        self.post_json::<serde_json::Value, _>("deleteWebhook", &Body { drop_pending_updates })
-            .await?;
+        self.post_json::<serde_json::Value, _>(
+            "deleteWebhook",
+            &Body {
+                drop_pending_updates,
+            },
+        )
+        .await?;
         Ok(())
     }
 

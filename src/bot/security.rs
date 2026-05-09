@@ -167,4 +167,26 @@ mod tests {
             "sudo snft -d -f 20"
         );
     }
+
+    #[test]
+    fn test_expand_cmd_no_args_produces_empty_substitution() {
+        assert_eq!(expand_cmd("echo {arg1}", &[]), "echo ");
+        assert_eq!(expand_cmd("echo {args}", &[]), "echo ");
+    }
+
+    #[test]
+    fn test_expand_cmd_arg1_uses_only_first() {
+        assert_eq!(
+            expand_cmd("ban {arg1}", &["1.2.3.4", "extra"]),
+            "ban 1.2.3.4"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_allows_special_chars() {
+        assert!(sanitize_arg("path/to/file").is_ok());
+        assert!(sanitize_arg("key:value").is_ok());
+        assert!(sanitize_arg("a-b_c").is_ok());
+        assert!(sanitize_arg("host.example.com").is_ok());
+    }
 }

@@ -48,7 +48,7 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
         let _ = send(
             &ctx.tg,
             chat_id,
-            &ctx.lang.unauthorized_reply(&update.first_name()),
+            &ctx.lang.unauthorized_reply(update.first_name()),
             None,
         )
         .await;
@@ -84,13 +84,7 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
 
     // sudo restricted to super-admin
     if cmd_name == "sudo" && !ctx.config.is_super_admin(chat_id) {
-        let _ = send(
-            &ctx.tg,
-            chat_id,
-            ctx.lang.sudo_super_admin_only(),
-            None,
-        )
-        .await;
+        let _ = send(&ctx.tg, chat_id, ctx.lang.sudo_super_admin_only(), None).await;
         return;
     }
 
@@ -144,7 +138,11 @@ pub async fn dispatch(update: &Update, ctx: &BotContext) {
         let timeout = ctx.config.bot.exec_timeout_secs;
         match run_configured_cmd(cmd_cfg, &args, timeout).await {
             Ok(out) => {
-                let msg = if out.trim().is_empty() { ctx.lang.executed() } else { &out };
+                let msg = if out.trim().is_empty() {
+                    ctx.lang.executed()
+                } else {
+                    &out
+                };
                 let _ = send(&ctx.tg, chat_id, msg, None).await;
             }
             Err(e) => send_error(&ctx.tg, chat_id, &e, ctx.lang).await,
@@ -197,8 +195,7 @@ fn read_proc_stats() -> (CpuStat, HashMap<u32, ProcStat>) {
                 .skip(1)
                 .filter_map(|x| x.parse().ok())
                 .collect();
-            let idle = nums.get(3).copied().unwrap_or(0)
-                + nums.get(4).copied().unwrap_or(0); // idle + iowait
+            let idle = nums.get(3).copied().unwrap_or(0) + nums.get(4).copied().unwrap_or(0); // idle + iowait
             let total: u64 = nums.iter().sum();
             Some(CpuStat { total, idle })
         })
@@ -250,7 +247,15 @@ fn read_proc_stats() -> (CpuStat, HashMap<u32, ProcStat>) {
             }
         }
 
-        procs.insert(pid, ProcStat { name, utime, stime, rss_kb });
+        procs.insert(
+            pid,
+            ProcStat {
+                name,
+                utime,
+                stime,
+                rss_kb,
+            },
+        );
     }
     (cpu, procs)
 }
@@ -366,26 +371,28 @@ async fn handle_pam_callback(text: &str, chat_id: i64, ctx: &BotContext) -> bool
             let _ = send(&ctx.tg, chat_id, ctx.lang.pam_invalid_2fa_id(), None).await;
             return true;
         }
-        let path  = format!("/run/tgbot/pam/{}", rest);
+        let path = format!("/run/tgbot/pam/{}", rest);
         let value = if approved { "approved" } else { "denied" };
         // create(false) prevents recreating the file if PAM already timed out and
         // removed it — avoids orphaned files and false-success replies to admin.
         use std::io::Write as _;
         let write_result = std::fs::OpenOptions::new()
-            .write(true).create(false).truncate(true)
+            .write(true)
+            .create(false)
+            .truncate(true)
             .open(&path)
             .and_then(|mut f| f.write_all(value.as_bytes()));
         match write_result {
             Ok(_) => {
-                let reply = if approved { ctx.lang.pam_approved() } else { ctx.lang.pam_denied() };
+                let reply = if approved {
+                    ctx.lang.pam_approved()
+                } else {
+                    ctx.lang.pam_denied()
+                };
                 let _ = send(&ctx.tg, chat_id, reply, None).await;
             }
             Err(e) => {
-                let _ = send(
-                    &ctx.tg, chat_id,
-                    &ctx.lang.pam_ipc_error(&e),
-                    None,
-                ).await;
+                let _ = send(&ctx.tg, chat_id, &ctx.lang.pam_ipc_error(&e), None).await;
             }
         }
         return true;
@@ -400,11 +407,15 @@ async fn handle_pam_callback(text: &str, chat_id: i64, ctx: &BotContext) -> bool
         match exec_shell(
             &format!("sudo /usr/bin/loginctl terminate-session {}", sid),
             10,
-        ).await {
+        )
+        .await
+        {
             Ok(out) if out.contains("[exit:") => {
-                let _ = send(&ctx.tg, chat_id, &out.trim().to_string(), None).await;
+                let _ = send(&ctx.tg, chat_id, out.trim(), None).await;
             }
-            Ok(_)  => { let _ = send(&ctx.tg, chat_id, ctx.lang.pam_session_terminated(), None).await; }
+            Ok(_) => {
+                let _ = send(&ctx.tg, chat_id, ctx.lang.pam_session_terminated(), None).await;
+            }
             Err(e) => send_error(&ctx.tg, chat_id, &e, ctx.lang).await,
         }
         return true;
@@ -424,7 +435,9 @@ async fn handle_ping(host: &str, timeout_secs: u64, lang: Lang) -> Result<String
 
 fn validate_period(p: &str) -> bool {
     // Use char_indices to avoid split_at panic on multibyte UTF-8 chars
-    let Some((suffix_pos, _)) = p.char_indices().next_back() else { return false };
+    let Some((suffix_pos, _)) = p.char_indices().next_back() else {
+        return false;
+    };
     let digits = &p[..suffix_pos];
     let suffix = &p[suffix_pos..];
     !digits.is_empty()
@@ -465,7 +478,10 @@ async fn handle_zbx_graph(
     }
     let name = args.get(2).copied().unwrap_or("");
     // Cap graph name length — find safe UTF-8 boundary
-    let name_end = (0..=256.min(name.len())).rev().find(|&i| name.is_char_boundary(i)).unwrap_or(0);
+    let name_end = (0..=256.min(name.len()))
+        .rev()
+        .find(|&i| name.is_char_boundary(i))
+        .unwrap_or(0);
     let name = &name[..name_end];
     let bytes = crate::zabbix::graph::fetch(&ctx.config.zabbix, item_id, period, name).await?;
     ctx.tg.send_document(chat_id, "graph.png", bytes).await?;
@@ -500,7 +516,10 @@ mod tests {
     #[tokio::test]
     async fn test_ping_invalid_chars() {
         let result = handle_ping("host; rm -rf /", 5, Lang::Ru).await;
-        assert!(matches!(result.unwrap_err(), crate::error::BotError::InvalidArgument { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::error::BotError::InvalidArgument { .. }
+        ));
     }
 
     #[tokio::test]
@@ -512,7 +531,10 @@ mod tests {
         let result = handle_ping("-n", 1, Lang::Ru).await;
         // Should not return a usage message — it's not empty
         match result {
-            Ok(s) => assert!(!s.contains("Использование"), "'-n' should not produce usage msg"),
+            Ok(s) => assert!(
+                !s.contains("Использование"),
+                "'-n' should not produce usage msg"
+            ),
             Err(_) => {} // timeout or command error is fine
         }
     }

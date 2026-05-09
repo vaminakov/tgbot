@@ -1,12 +1,45 @@
 use indexmap::IndexMap;
 use serde::Deserialize;
 
+/// Per-admin entry. Supports both shorthand and full form:
+///   "123" = "Name"
+///   "123" = { name = "Name", notify_login = false }
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum AdminEntry {
+    Simple(String),
+    Full(AdminConfig),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
+pub struct AdminConfig {
+    pub name: String,
+    #[serde(default = "default_notify_login")]
+    pub notify_login: bool,
+}
+
+fn default_notify_login() -> bool {
+    true
+}
+
+impl AdminEntry {
+    #[allow(dead_code)]
+    pub fn notify_login(&self) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Full(c) => c.notify_login,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub bot: BotConfig,
     pub telegram: TelegramConfig,
     /// IndexMap preserves TOML insertion order — first entry is super-admin.
-    pub admins: IndexMap<String, String>,
+    pub admins: IndexMap<String, AdminEntry>,
     pub zabbix: ZabbixConfig,
     #[serde(default)]
     pub speedtest: SpeedtestConfig,
@@ -53,6 +86,16 @@ impl Config {
 
     pub fn is_super_admin(&self, chat_id: i64) -> bool {
         self.super_admin_id() == Some(chat_id)
+    }
+
+    #[allow(dead_code)]
+    /// All admin IDs that have login notifications enabled (notify_login = true, which is the default).
+    pub fn notify_login_admin_ids(&self) -> Vec<i64> {
+        self.admins
+            .iter()
+            .filter(|(_, entry)| entry.notify_login())
+            .filter_map(|(k, _)| k.parse().ok())
+            .collect()
     }
 }
 
@@ -122,7 +165,8 @@ impl TelegramConfig {
     pub fn api_base_urls(&self) -> Vec<String> {
         if !self.api_addresses.is_empty() {
             // api_addresses: full URLs expected (e.g. "https://mirror.example.com")
-            return self.api_addresses
+            return self
+                .api_addresses
                 .iter()
                 .map(|addr| format!("{}/bot{}/", addr.trim_end_matches('/'), self.token))
                 .collect();
@@ -260,15 +304,33 @@ mod defaults {
     pub fn notify_on_webhook_error() -> bool {
         true
     }
-    pub fn monitor_interval() -> u64 { 60 }
-    pub fn cpu_warn() -> u8 { 85 }
-    pub fn ram_warn() -> u8 { 90 }
-    pub fn disk_warn() -> u8 { 85 }
-    pub fn remind_secs() -> u64 { 1800 }
-    pub fn pam_notify_login() -> bool { true }
-    pub fn pam_timeout()       -> u64  { 60  }
-    pub fn two_factor_rate_limit_secs() -> u64 { 30 }
-    pub fn language() -> String { "auto".to_string() }
+    pub fn monitor_interval() -> u64 {
+        60
+    }
+    pub fn cpu_warn() -> u8 {
+        85
+    }
+    pub fn ram_warn() -> u8 {
+        90
+    }
+    pub fn disk_warn() -> u8 {
+        85
+    }
+    pub fn remind_secs() -> u64 {
+        1800
+    }
+    pub fn pam_notify_login() -> bool {
+        true
+    }
+    pub fn pam_timeout() -> u64 {
+        60
+    }
+    pub fn two_factor_rate_limit_secs() -> u64 {
+        30
+    }
+    pub fn language() -> String {
+        "auto".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -360,6 +422,38 @@ server_url = ""
     }
 
     #[test]
+    fn test_notify_login_default_true() {
+        let cfg: Config = toml::from_str(MINIMAL).unwrap();
+        assert_eq!(cfg.notify_login_admin_ids(), vec![115237453i64]);
+    }
+
+    #[test]
+    fn test_notify_login_explicit_false() {
+        let toml = r#"
+[bot]
+mode = "polling"
+bind = "127.0.0.1:8080"
+[telegram]
+token = "t"
+[admins]
+"111" = { name = "Super", notify_login = true }
+"222" = { name = "Silent", notify_login = false }
+"333" = { name = "Default" }
+[zabbix]
+url = "https://z/"
+user = "u"
+password = "p"
+[speedtest]
+server_url = ""
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let ids = cfg.notify_login_admin_ids();
+        assert!(ids.contains(&111));
+        assert!(!ids.contains(&222));
+        assert!(ids.contains(&333));
+    }
+
+    #[test]
     fn test_api_base_urls_default() {
         let cfg: Config = toml::from_str(MINIMAL).unwrap();
         assert_eq!(
@@ -427,11 +521,23 @@ server_url = ""
 
     #[test]
     fn test_pam_config_explicit() {
-        let toml = MINIMAL.to_string()
-            + "\n[pam]\nenabled = true\nblock_ip_cmd = \"ban-cs\"\n";
+        let toml = MINIMAL.to_string() + "\n[pam]\nenabled = true\nblock_ip_cmd = \"ban-cs\"\n";
         let cfg: Config = toml::from_str(&toml).unwrap();
         assert!(cfg.pam.enabled);
         assert_eq!(cfg.pam.block_ip_cmd, "ban-cs");
         assert_eq!(cfg.pam.two_factor_timeout_secs, 60); // default preserved
+    }
+
+    #[test]
+    fn test_is_super_admin() {
+        let cfg: Config = toml::from_str(MINIMAL).unwrap();
+        assert!(cfg.is_super_admin(115237453));
+        assert!(!cfg.is_super_admin(999999));
+    }
+
+    #[test]
+    fn test_load_file_not_found() {
+        let result = Config::load("/nonexistent/path/config.toml");
+        assert!(result.is_err());
     }
 }
